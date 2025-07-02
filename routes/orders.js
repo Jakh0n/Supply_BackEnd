@@ -6,6 +6,7 @@ const {
 	authenticate,
 	requireAdmin,
 	requireWorker,
+	requireAdminOrEditor,
 } = require('../middleware/auth')
 const { generateOrdersPDF } = require('../utils/pdfGenerator')
 
@@ -22,8 +23,8 @@ router.get('/', authenticate, async (req, res) => {
 			filter.worker = req.user._id
 		}
 
-		// Admins can filter by branch
-		if (branch && req.user.position === 'admin') {
+		// Admins and editors can filter by branch
+		if (branch && ['admin', 'editor'].includes(req.user.position)) {
 			filter.branch = branch
 		}
 
@@ -126,8 +127,13 @@ router.post(
 	],
 	async (req, res) => {
 		try {
+			console.log('=== ORDER CREATION DEBUG START ===')
+			console.log('User:', req.user)
+			console.log('Request body:', JSON.stringify(req.body, null, 2))
+
 			const errors = validationResult(req)
 			if (!errors.isEmpty()) {
+				console.log('Validation errors:', errors.array())
 				return res.status(400).json({
 					message: 'Validation failed',
 					errors: errors.array(),
@@ -136,14 +142,30 @@ router.post(
 
 			const { requestedDate, items, notes } = req.body
 
+			console.log('Extracted data:')
+			console.log('- requestedDate:', requestedDate)
+			console.log('- items:', items)
+			console.log('- notes:', notes)
+			console.log('- user.branch:', req.user.branch)
+
 			// Validate that all products exist and are active
 			const productIds = items.map(item => item.product)
+			console.log('Product IDs to validate:', productIds)
+
 			const products = await Product.find({
 				_id: { $in: productIds },
 				isActive: true,
 			})
 
+			console.log(
+				'Found products:',
+				products.length,
+				'out of',
+				productIds.length
+			)
+
 			if (products.length !== productIds.length) {
+				console.log('Product validation failed')
 				return res.status(400).json({
 					message: 'One or more products are invalid or inactive',
 				})
@@ -154,32 +176,129 @@ router.post(
 			const today = new Date()
 			today.setHours(0, 0, 0, 0)
 
+			console.log('Date validation:')
+			console.log('- requestedDateTime:', requestedDateTime)
+			console.log('- today:', today)
+
 			if (requestedDateTime < today) {
+				console.log('Date validation failed - date in past')
 				return res.status(400).json({
 					message: 'Requested date cannot be in the past',
 				})
 			}
 
-			const order = new Order({
+			console.log('Creating order object...')
+
+			// Generate order number manually (workaround for pre-save hook)
+			let orderNumber
+			try {
+				const date = new Date()
+				const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '')
+
+				// Get start and end of today for counting
+				const startOfDay = new Date(
+					date.getFullYear(),
+					date.getMonth(),
+					date.getDate()
+				)
+				const endOfDay = new Date(
+					date.getFullYear(),
+					date.getMonth(),
+					date.getDate() + 1
+				)
+
+				console.log('Manually generating order number for date:', dateStr)
+
+				// Count orders created today
+				const count = await Order.countDocuments({
+					createdAt: {
+						$gte: startOfDay,
+						$lt: endOfDay,
+					},
+				})
+
+				console.log('Found', count, 'orders today')
+
+				// Generate order number
+				orderNumber = `ORD-${dateStr}-${String(count + 1).padStart(3, '0')}`
+
+				console.log('Generated order number:', orderNumber)
+
+				// Check if this order number already exists (handle race conditions)
+				const existingOrder = await Order.findOne({ orderNumber })
+				if (existingOrder) {
+					console.log('Order number exists, adding random suffix')
+					const randomSuffix = Math.floor(Math.random() * 1000)
+						.toString()
+						.padStart(3, '0')
+					orderNumber = `ORD-${dateStr}-${String(count + 1).padStart(
+						3,
+						'0'
+					)}-${randomSuffix}`
+					console.log('New order number with suffix:', orderNumber)
+				}
+			} catch (error) {
+				console.error('Error in manual orderNumber generation:', error)
+				// Fallback: use timestamp-based order number
+				const timestamp = Date.now().toString().slice(-8)
+				orderNumber = `ORD-${timestamp}`
+				console.log('Using fallback order number:', orderNumber)
+			}
+
+			const orderData = {
+				orderNumber,
 				worker: req.user._id,
 				branch: req.user.branch,
 				requestedDate: requestedDateTime,
 				items,
 				notes,
-			})
+			}
 
+			console.log('Order data to save:', JSON.stringify(orderData, null, 2))
+
+			const order = new Order(orderData)
+
+			console.log('Order object created, attempting to save...')
 			await order.save()
+
+			console.log('Order saved successfully, populating...')
 			await order.populate([
 				{ path: 'worker', select: 'username branch' },
 				{ path: 'items.product', select: 'name unit category' },
 			])
+
+			console.log('Order creation completed successfully')
+			console.log('=== ORDER CREATION DEBUG END ===')
 
 			res.status(201).json({
 				message: 'Order created successfully',
 				order,
 			})
 		} catch (error) {
-			console.error('Create order error:', error)
+			console.error('=== ORDER CREATION ERROR ===')
+			console.error('Error type:', error.constructor.name)
+			console.error('Error message:', error.message)
+			console.error('Error stack:', error.stack)
+
+			if (error.name === 'ValidationError') {
+				console.error('Validation error details:', error.errors)
+				return res.status(400).json({
+					message: 'Validation failed',
+					details: Object.keys(error.errors).map(key => ({
+						field: key,
+						message: error.errors[key].message,
+					})),
+				})
+			}
+
+			if (error.code === 11000) {
+				console.error('Duplicate key error:', error.keyValue)
+				return res.status(400).json({
+					message: 'Duplicate order number. Please try again.',
+				})
+			}
+
+			console.error('=== ORDER CREATION ERROR END ===')
 			res.status(500).json({ message: 'Server error creating order' })
 		}
 	}
@@ -383,143 +502,160 @@ router.delete('/:id', authenticate, async (req, res) => {
 	}
 })
 
-// Get orders for PDF generation (admin only)
-router.get('/export/pdf', authenticate, requireAdmin, async (req, res) => {
-	try {
-		const { date, branch } = req.query
+// Export orders to PDF (admin/editor only)
+router.get(
+	'/export/pdf',
+	authenticate,
+	requireAdminOrEditor,
+	async (req, res) => {
+		try {
+			const { date, branch } = req.query
 
-		if (!date) {
-			return res.status(400).json({ message: 'Date is required' })
+			if (!date) {
+				return res.status(400).json({ message: 'Date is required' })
+			}
+
+			const filter = {}
+
+			// Filter by date
+			const startDate = new Date(date)
+			const endDate = new Date(date)
+			endDate.setDate(endDate.getDate() + 1)
+
+			filter.requestedDate = {
+				$gte: startDate,
+				$lt: endDate,
+			}
+
+			// Filter by branch if specified
+			if (branch && branch !== 'all') {
+				filter.branch = branch
+			}
+
+			const orders = await Order.find(filter)
+				.populate('worker', 'username branch')
+				.populate('items.product', 'name unit category supplier')
+				.sort({ branch: 1, worker: 1 })
+
+			res.json({ orders })
+		} catch (error) {
+			console.error('Export orders error:', error)
+			res.status(500).json({ message: 'Server error exporting orders' })
 		}
-
-		const filter = {}
-
-		// Filter by date
-		const startDate = new Date(date)
-		const endDate = new Date(date)
-		endDate.setDate(endDate.getDate() + 1)
-
-		filter.requestedDate = {
-			$gte: startDate,
-			$lt: endDate,
-		}
-
-		// Filter by branch if specified
-		if (branch && branch !== 'all') {
-			filter.branch = branch
-		}
-
-		const orders = await Order.find(filter)
-			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category supplier')
-			.sort({ branch: 1, worker: 1 })
-
-		res.json({ orders })
-	} catch (error) {
-		console.error('Export orders error:', error)
-		res.status(500).json({ message: 'Server error exporting orders' })
 	}
-})
+)
 
-// Get order statistics (admin only)
-router.get('/stats/dashboard', authenticate, requireAdmin, async (req, res) => {
-	try {
-		const today = new Date()
-		const startOfDay = new Date(
-			today.getFullYear(),
-			today.getMonth(),
-			today.getDate()
-		)
-		const endOfDay = new Date(
-			today.getFullYear(),
-			today.getMonth(),
-			today.getDate() + 1
-		)
+// Get dashboard statistics (admin/editor only)
+router.get(
+	'/stats/dashboard',
+	authenticate,
+	requireAdminOrEditor,
+	async (req, res) => {
+		try {
+			const today = new Date()
+			const startOfDay = new Date(
+				today.getFullYear(),
+				today.getMonth(),
+				today.getDate()
+			)
+			const endOfDay = new Date(
+				today.getFullYear(),
+				today.getMonth(),
+				today.getDate() + 1
+			)
 
-		const [todayOrders, totalOrders, pendingOrders, branchStats] =
-			await Promise.all([
-				Order.countDocuments({
-					createdAt: { $gte: startOfDay, $lt: endOfDay },
-				}),
-				Order.countDocuments(),
-				Order.countDocuments({ status: 'pending' }),
-				Order.aggregate([
-					{
-						$group: {
-							_id: '$branch',
-							totalOrders: { $sum: 1 },
-							pendingOrders: {
-								$sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+			const [todayOrders, totalOrders, pendingOrders, branchStats] =
+				await Promise.all([
+					Order.countDocuments({
+						createdAt: { $gte: startOfDay, $lt: endOfDay },
+					}),
+					Order.countDocuments(),
+					Order.countDocuments({ status: 'pending' }),
+					Order.aggregate([
+						{
+							$group: {
+								_id: '$branch',
+								totalOrders: { $sum: 1 },
+								pendingOrders: {
+									$sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+								},
 							},
 						},
-					},
-				]),
-			])
+					]),
+				])
 
-		res.json({
-			todayOrders,
-			totalOrders,
-			pendingOrders,
-			branchStats,
-		})
-	} catch (error) {
-		console.error('Get order stats error:', error)
-		res.status(500).json({ message: 'Server error fetching order statistics' })
+			res.json({
+				todayOrders,
+				totalOrders,
+				pendingOrders,
+				branchStats,
+			})
+		} catch (error) {
+			console.error('Get order stats error:', error)
+			res
+				.status(500)
+				.json({ message: 'Server error fetching order statistics' })
+		}
 	}
-})
+)
 
-// Download orders as PDF (admin only)
-router.get('/download/pdf', authenticate, requireAdmin, async (req, res) => {
-	try {
-		const { date, branch } = req.query
+// Download PDF report (admin/editor only)
+router.get(
+	'/download/pdf',
+	authenticate,
+	requireAdminOrEditor,
+	async (req, res) => {
+		try {
+			const { date, branch } = req.query
 
-		if (!date) {
-			return res.status(400).json({ message: 'Date is required' })
+			if (!date) {
+				return res.status(400).json({ message: 'Date is required' })
+			}
+
+			const filter = {}
+
+			// Filter by date
+			const startDate = new Date(date)
+			const endDate = new Date(date)
+			endDate.setDate(endDate.getDate() + 1)
+
+			filter.requestedDate = {
+				$gte: startDate,
+				$lt: endDate,
+			}
+
+			// Filter by branch if specified
+			if (branch && branch !== 'all') {
+				filter.branch = branch
+			}
+
+			const orders = await Order.find(filter)
+				.populate('worker', 'username branch')
+				.populate('items.product', 'name unit category supplier')
+				.sort({ branch: 1, worker: 1 })
+
+			if (orders.length === 0) {
+				return res
+					.status(404)
+					.json({ message: 'No orders found for the specified criteria' })
+			}
+
+			const pdfBuffer = await generateOrdersPDF(orders, { date, branch })
+
+			const filename = `orders-${date}${
+				branch && branch !== 'all' ? `-${branch}` : ''
+			}.pdf`
+
+			res.setHeader('Content-Type', 'application/pdf')
+			res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+			res.setHeader('Content-Length', pdfBuffer.length)
+
+			res.send(pdfBuffer)
+		} catch (error) {
+			console.error('Download PDF error:', error)
+			res.status(500).json({ message: 'Server error generating PDF' })
 		}
-
-		const filter = {}
-
-		// Filter by date
-		const startDate = new Date(date)
-		const endDate = new Date(date)
-		endDate.setDate(endDate.getDate() + 1)
-
-		filter.requestedDate = {
-			$gte: startDate,
-			$lt: endDate,
-		}
-
-		// Filter by branch if specified
-		if (branch && branch !== 'all') {
-			filter.branch = branch
-		}
-
-		const orders = await Order.find(filter)
-			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category supplier')
-			.sort({ branch: 1, worker: 1 })
-
-		if (orders.length === 0) {
-			return res
-				.status(404)
-				.json({ message: 'No orders found for the specified criteria' })
-		}
-
-		const pdfBuffer = await generateOrdersPDF(orders, { date, branch })
-
-		const filename = `orders-${date}${
-			branch && branch !== 'all' ? `-${branch}` : ''
-		}.pdf`
-
-		res.setHeader('Content-Type', 'application/pdf')
-		res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
-		res.setHeader('Content-Length', pdfBuffer.length)
-
-		res.send(pdfBuffer)
-	} catch (error) {
-		console.error('Download PDF error:', error)
-		res.status(500).json({ message: 'Server error generating PDF' })
 	}
-})
+)
 
 module.exports = router

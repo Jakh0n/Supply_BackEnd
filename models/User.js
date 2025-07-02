@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema(
 		position: {
 			type: String,
 			required: [true, 'Position is required'],
-			enum: ['admin', 'worker'],
+			enum: ['admin', 'worker', 'editor'],
 			default: 'worker',
 		},
 		branch: {

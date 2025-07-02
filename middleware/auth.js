@@ -48,12 +48,32 @@ const requireWorker = (req, res, next) => {
 	next()
 }
 
+// Check if user is editor
+const requireEditor = (req, res, next) => {
+	if (req.user.position !== 'editor') {
+		return res
+			.status(403)
+			.json({ message: 'Access denied. Editor privileges required.' })
+	}
+	next()
+}
+
 // Allow both admin and worker
 const requireAuth = (req, res, next) => {
-	if (!['admin', 'worker'].includes(req.user.position)) {
+	if (!['admin', 'worker', 'editor'].includes(req.user.position)) {
 		return res
 			.status(403)
 			.json({ message: 'Access denied. Invalid user role.' })
+	}
+	next()
+}
+
+// Allow admin or editor (for order viewing)
+const requireAdminOrEditor = (req, res, next) => {
+	if (!['admin', 'editor'].includes(req.user.position)) {
+		return res
+			.status(403)
+			.json({ message: 'Access denied. Admin or Editor privileges required.' })
 	}
 	next()
 }
@@ -62,5 +82,7 @@ module.exports = {
 	authenticate,
 	requireAdmin,
 	requireWorker,
+	requireEditor,
 	requireAuth,
+	requireAdminOrEditor,
 }

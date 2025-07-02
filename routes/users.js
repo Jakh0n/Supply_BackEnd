@@ -76,8 +76,8 @@ router.post(
 			.isLength({ min: 6 })
 			.withMessage('Password must be at least 6 characters long'),
 		body('position')
-			.isIn(['admin', 'worker'])
-			.withMessage('Position must be either admin or worker'),
+			.isIn(['admin', 'worker', 'editor'])
+			.withMessage('Position must be either admin, worker, or editor'),
 		body('branch')
 			.optional()
 			.isLength({ min: 1 })
@@ -155,8 +155,8 @@ router.put(
 			.withMessage('Password must be at least 6 characters long'),
 		body('position')
 			.optional()
-			.isIn(['admin', 'worker'])
-			.withMessage('Position must be either admin or worker'),
+			.isIn(['admin', 'worker', 'editor'])
+			.withMessage('Position must be either admin, worker, or editor'),
 		body('branch')
 			.optional()
 			.isLength({ min: 1 })
