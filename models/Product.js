@@ -47,6 +47,17 @@ const productSchema = new mongoose.Schema(
 			trim: true,
 			maxlength: [100, 'Supplier name cannot exceed 100 characters'],
 		},
+		price: {
+			type: Number,
+			required: [true, 'Product price is required'],
+			min: [0, 'Price cannot be negative'],
+			validate: {
+				validator: function (value) {
+					return Number.isFinite(value) && value >= 0
+				},
+				message: 'Price must be a valid positive number',
+			},
+		},
 		isActive: {
 			type: Boolean,
 			default: true,

@@ -8,7 +8,7 @@ const router = express.Router()
 // Get all users (admin only)
 router.get('/', authenticate, requireAdmin, async (req, res) => {
 	try {
-		const { position, active = 'true', search } = req.query
+		const { position, active, search } = req.query
 		const filter = {}
 
 		// Filter by position
@@ -16,8 +16,8 @@ router.get('/', authenticate, requireAdmin, async (req, res) => {
 			filter.position = position
 		}
 
-		// Filter by active status
-		if (active !== 'all') {
+		// Filter by active status - only apply filter if explicitly specified
+		if (active !== undefined && active !== 'all') {
 			filter.isActive = active === 'true'
 		}
 

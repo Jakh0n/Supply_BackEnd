@@ -8,11 +8,11 @@ const router = express.Router()
 // Get all products (accessible to all authenticated users)
 router.get('/', authenticate, async (req, res) => {
 	try {
-		const { category, search, active = 'true' } = req.query
+		const { category, search, active } = req.query
 		const filter = {}
 
-		// Filter by active status
-		if (active !== 'all') {
+		// Filter by active status - only apply filter if explicitly specified
+		if (active !== undefined && active !== 'all') {
 			filter.isActive = active === 'true'
 		}
 
@@ -105,6 +105,12 @@ router.post(
 			.optional()
 			.isLength({ max: 100 })
 			.withMessage('Supplier name cannot exceed 100 characters'),
+		body('price')
+			.optional()
+			.isNumeric()
+			.withMessage('Price must be a number')
+			.isFloat({ min: 0 })
+			.withMessage('Price must be a positive number'),
 	],
 	async (req, res) => {
 		try {
@@ -116,7 +122,7 @@ router.post(
 				})
 			}
 
-			const { name, category, unit, description, supplier } = req.body
+			const { name, category, unit, description, supplier, price } = req.body
 
 			// Check if product with same name already exists
 			const existingProduct = await Product.findOne({
@@ -135,6 +141,7 @@ router.post(
 				unit,
 				description,
 				supplier,
+				price,
 				createdBy: req.user._id,
 			})
 
@@ -197,6 +204,12 @@ router.put(
 			.optional()
 			.isLength({ max: 100 })
 			.withMessage('Supplier name cannot exceed 100 characters'),
+		body('price')
+			.optional()
+			.isNumeric()
+			.withMessage('Price must be a number')
+			.isFloat({ min: 0 })
+			.withMessage('Price must be a positive number'),
 	],
 	async (req, res) => {
 		try {
