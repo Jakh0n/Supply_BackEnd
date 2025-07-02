@@ -11,6 +11,7 @@ const authRoutes = require('./routes/auth')
 const productRoutes = require('./routes/products')
 const orderRoutes = require('./routes/orders')
 const userRoutes = require('./routes/users')
+const branchRoutes = require('./routes/branches')
 
 const app = express()
 
@@ -30,6 +31,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
 app.use('/api/users', userRoutes)
+app.use('/api/branches', branchRoutes)
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

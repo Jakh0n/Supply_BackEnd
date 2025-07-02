@@ -24,10 +24,8 @@ const userSchema = new mongoose.Schema(
 		},
 		branch: {
 			type: String,
-			required: function () {
-				return this.position === 'worker'
-			},
 			trim: true,
+			// Branch is optional - can be assigned later by admin
 		},
 		isActive: {
 			type: Boolean,

@@ -26,12 +26,12 @@ router.post(
 			.isLength({ min: 6 })
 			.withMessage('Password must be at least 6 characters long'),
 		body('position')
-			.isIn(['admin', 'worker'])
-			.withMessage('Position must be either admin or worker'),
+			.isIn(['admin', 'worker', 'editor'])
+			.withMessage('Position must be admin, worker, or editor'),
 		body('branch')
 			.optional()
 			.isLength({ min: 1 })
-			.withMessage('Branch is required for workers'),
+			.withMessage('Branch name must not be empty if provided'),
 	],
 	async (req, res) => {
 		try {
@@ -51,16 +51,11 @@ router.post(
 				return res.status(400).json({ message: 'Username already exists' })
 			}
 
-			// Validate branch for workers
-			if (position === 'worker' && !branch) {
-				return res
-					.status(400)
-					.json({ message: 'Branch is required for workers' })
-			}
-
 			// Create new user
 			const userData = { username, password, position }
-			if (position === 'worker') {
+
+			// Add branch if provided (optional for workers, not required during registration)
+			if (branch) {
 				userData.branch = branch
 			}
 
@@ -77,7 +72,7 @@ router.post(
 					id: user._id,
 					username: user.username,
 					position: user.position,
-					branch: user.branch,
+					branch: user.branch || null,
 				},
 			})
 		} catch (error) {

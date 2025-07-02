@@ -104,6 +104,10 @@ router.post(
 	authenticate,
 	requireWorker,
 	[
+		body('branch')
+			.trim()
+			.isLength({ min: 1 })
+			.withMessage('Branch is required'),
 		body('requestedDate')
 			.isISO8601()
 			.withMessage('Valid requested date is required'),
@@ -140,9 +144,10 @@ router.post(
 				})
 			}
 
-			const { requestedDate, items, notes } = req.body
+			const { branch, requestedDate, items, notes } = req.body
 
 			console.log('Extracted data:')
+			console.log('- branch:', branch)
 			console.log('- requestedDate:', requestedDate)
 			console.log('- items:', items)
 			console.log('- notes:', notes)
@@ -248,7 +253,7 @@ router.post(
 			const orderData = {
 				orderNumber,
 				worker: req.user._id,
-				branch: req.user.branch,
+				branch: branch,
 				requestedDate: requestedDateTime,
 				items,
 				notes,
