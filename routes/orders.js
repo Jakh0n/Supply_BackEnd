@@ -49,7 +49,7 @@ router.get('/', authenticate, async (req, res) => {
 
 		const orders = await Order.find(filter)
 			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category')
+			.populate('items.product', 'name unit category price')
 			.populate('processedBy', 'username')
 			.sort({ createdAt: -1 })
 			.skip(skip)
@@ -76,7 +76,7 @@ router.get('/:id', authenticate, async (req, res) => {
 	try {
 		const order = await Order.findById(req.params.id)
 			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category supplier')
+			.populate('items.product', 'name unit category supplier price')
 			.populate('processedBy', 'username')
 
 		if (!order) {
@@ -269,7 +269,7 @@ router.post(
 			console.log('Order saved successfully, populating...')
 			await order.populate([
 				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category' },
+				{ path: 'items.product', select: 'name unit category price' },
 			])
 
 			console.log('Order creation completed successfully')
@@ -309,11 +309,11 @@ router.post(
 	}
 )
 
-// Update order status (admin only)
+// Update order status (admin/editor only)
 router.patch(
 	'/:id/status',
 	authenticate,
-	requireAdmin,
+	requireAdminOrEditor,
 	[
 		body('status')
 			.isIn(['pending', 'approved', 'rejected', 'completed'])
@@ -350,7 +350,7 @@ router.patch(
 			await order.save()
 			await order.populate([
 				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category' },
+				{ path: 'items.product', select: 'name unit category price' },
 				{ path: 'processedBy', select: 'username' },
 			])
 
@@ -461,7 +461,7 @@ router.put(
 				{ new: true, runValidators: true }
 			).populate([
 				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category' },
+				{ path: 'items.product', select: 'name unit category price' },
 			])
 
 			res.json({
@@ -539,7 +539,7 @@ router.get(
 
 			const orders = await Order.find(filter)
 				.populate('worker', 'username branch')
-				.populate('items.product', 'name unit category supplier')
+				.populate('items.product', 'name unit category supplier price')
 				.sort({ branch: 1, worker: 1 })
 
 			res.json({ orders })
@@ -604,61 +604,517 @@ router.get(
 	}
 )
 
-// Download PDF report (admin/editor only)
+// Get branch analytics (admin/editor only)
 router.get(
-	'/download/pdf',
+	'/analytics/branches',
 	authenticate,
 	requireAdminOrEditor,
 	async (req, res) => {
 		try {
-			const { date, branch } = req.query
+			const { timeframe = 'week' } = req.query
 
-			if (!date) {
-				return res.status(400).json({ message: 'Date is required' })
+			// Calculate date range based on timeframe
+			const now = new Date()
+			let startDate = new Date()
+			let previousStartDate = new Date()
+
+			switch (timeframe) {
+				case 'day':
+					startDate.setDate(now.getDate() - 1)
+					previousStartDate.setDate(now.getDate() - 2)
+					break
+				case 'week':
+					startDate.setDate(now.getDate() - 7)
+					previousStartDate.setDate(now.getDate() - 14)
+					break
+				case 'month':
+					startDate.setMonth(now.getMonth() - 1)
+					previousStartDate.setMonth(now.getMonth() - 2)
+					break
+				case 'quarter':
+					startDate.setMonth(now.getMonth() - 3)
+					previousStartDate.setMonth(now.getMonth() - 6)
+					break
+				default:
+					startDate.setDate(now.getDate() - 7)
+					previousStartDate.setDate(now.getDate() - 14)
 			}
 
-			const filter = {}
+			// Get current period analytics
+			const currentPeriodAnalytics = await Order.aggregate([
+				{
+					$match: {
+						createdAt: { $gte: startDate, $lte: now },
+					},
+				},
+				{
+					$lookup: {
+						from: 'products',
+						localField: 'items.product',
+						foreignField: '_id',
+						as: 'productDetails',
+					},
+				},
+				{
+					$unwind: '$items',
+				},
+				{
+					$lookup: {
+						from: 'products',
+						localField: 'items.product',
+						foreignField: '_id',
+						as: 'itemProduct',
+					},
+				},
+				{
+					$unwind: '$itemProduct',
+				},
+				{
+					$group: {
+						_id: '$branch',
+						totalOrders: { $addToSet: '$_id' },
+						pendingOrders: {
+							$sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+						},
+						completedOrders: {
+							$sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] },
+						},
+						totalValue: {
+							$sum: { $multiply: ['$items.quantity', '$itemProduct.price'] },
+						},
+						products: {
+							$push: {
+								name: '$itemProduct.name',
+								quantity: '$items.quantity',
+								value: { $multiply: ['$items.quantity', '$itemProduct.price'] },
+							},
+						},
+					},
+				},
+				{
+					$project: {
+						branch: '$_id',
+						totalOrders: { $size: '$totalOrders' },
+						pendingOrders: 1,
+						completedOrders: 1,
+						totalValue: 1,
+						avgOrderValue: {
+							$cond: [
+								{ $gt: [{ $size: '$totalOrders' }, 0] },
+								{ $divide: ['$totalValue', { $size: '$totalOrders' }] },
+								0,
+							],
+						},
+						products: 1,
+					},
+				},
+			])
 
-			// Filter by date
-			const startDate = new Date(date)
-			const endDate = new Date(date)
-			endDate.setDate(endDate.getDate() + 1)
+			// Get previous period for trend calculation
+			const previousPeriodAnalytics = await Order.aggregate([
+				{
+					$match: {
+						createdAt: { $gte: previousStartDate, $lt: startDate },
+					},
+				},
+				{
+					$group: {
+						_id: '$branch',
+						totalOrders: { $addToSet: '$_id' },
+					},
+				},
+				{
+					$project: {
+						branch: '$_id',
+						totalOrders: { $size: '$totalOrders' },
+					},
+				},
+			])
 
-			filter.requestedDate = {
-				$gte: startDate,
-				$lt: endDate,
-			}
+			// Calculate trends and format response
+			const branchAnalytics = currentPeriodAnalytics.map(current => {
+				const previous = previousPeriodAnalytics.find(
+					p => p.branch === current.branch
+				)
+				const previousOrders = previous ? previous.totalOrders : 0
+				const weeklyTrend =
+					previousOrders > 0
+						? Math.round(
+								((current.totalOrders - previousOrders) / previousOrders) * 100
+						  )
+						: current.totalOrders > 0
+						? 100
+						: 0
 
-			// Filter by branch if specified
-			if (branch && branch !== 'all') {
-				filter.branch = branch
-			}
+				// Calculate top products for this branch
+				const productMap = new Map()
+				current.products.forEach(product => {
+					if (productMap.has(product.name)) {
+						const existing = productMap.get(product.name)
+						existing.quantity += product.quantity
+						existing.value += product.value
+					} else {
+						productMap.set(product.name, {
+							name: product.name,
+							quantity: product.quantity,
+							value: product.value,
+						})
+					}
+				})
 
-			const orders = await Order.find(filter)
-				.populate('worker', 'username branch')
-				.populate('items.product', 'name unit category supplier')
-				.sort({ branch: 1, worker: 1 })
+				const mostOrderedProducts = Array.from(productMap.values())
+					.sort((a, b) => b.quantity - a.quantity)
+					.slice(0, 5)
 
-			if (orders.length === 0) {
-				return res
-					.status(404)
-					.json({ message: 'No orders found for the specified criteria' })
-			}
+				return {
+					branch: current.branch,
+					totalOrders: current.totalOrders,
+					totalValue: current.totalValue || 0,
+					avgOrderValue: current.avgOrderValue || 0,
+					pendingOrders: current.pendingOrders || 0,
+					completedOrders: current.completedOrders || 0,
+					mostOrderedProducts,
+					weeklyTrend,
+				}
+			})
 
-			const pdfBuffer = await generateOrdersPDF(orders, { date, branch })
-
-			const filename = `orders-${date}${
-				branch && branch !== 'all' ? `-${branch}` : ''
-			}.pdf`
-
-			res.setHeader('Content-Type', 'application/pdf')
-			res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
-			res.setHeader('Content-Length', pdfBuffer.length)
-
-			res.send(pdfBuffer)
+			res.json({ branches: branchAnalytics })
 		} catch (error) {
-			console.error('Download PDF error:', error)
-			res.status(500).json({ message: 'Server error generating PDF' })
+			console.error('Get branch analytics error:', error)
+			res
+				.status(500)
+				.json({ message: 'Server error fetching branch analytics' })
+		}
+	}
+)
+
+// Get product insights (admin/editor only)
+router.get(
+	'/analytics/products',
+	authenticate,
+	requireAdminOrEditor,
+	async (req, res) => {
+		try {
+			const { timeframe = 'week' } = req.query
+
+			// Calculate date range based on timeframe
+			const now = new Date()
+			let startDate = new Date()
+			let previousStartDate = new Date()
+
+			switch (timeframe) {
+				case 'day':
+					startDate.setDate(now.getDate() - 1)
+					previousStartDate.setDate(now.getDate() - 2)
+					break
+				case 'week':
+					startDate.setDate(now.getDate() - 7)
+					previousStartDate.setDate(now.getDate() - 14)
+					break
+				case 'month':
+					startDate.setMonth(now.getMonth() - 1)
+					previousStartDate.setMonth(now.getMonth() - 2)
+					break
+				case 'quarter':
+					startDate.setMonth(now.getMonth() - 3)
+					previousStartDate.setMonth(now.getMonth() - 6)
+					break
+				default:
+					startDate.setDate(now.getDate() - 7)
+					previousStartDate.setDate(now.getDate() - 14)
+			}
+
+			// Get current period product analytics
+			const currentProductAnalytics = await Order.aggregate([
+				{
+					$match: {
+						createdAt: { $gte: startDate, $lte: now },
+					},
+				},
+				{
+					$unwind: '$items',
+				},
+				{
+					$lookup: {
+						from: 'products',
+						localField: 'items.product',
+						foreignField: '_id',
+						as: 'productDetails',
+					},
+				},
+				{
+					$unwind: '$productDetails',
+				},
+				{
+					$group: {
+						_id: '$items.product',
+						name: { $first: '$productDetails.name' },
+						totalOrdered: { $sum: '$items.quantity' },
+						totalValue: {
+							$sum: { $multiply: ['$items.quantity', '$productDetails.price'] },
+						},
+						orderCount: { $sum: 1 },
+						avgPrice: { $first: '$productDetails.price' },
+					},
+				},
+				{
+					$project: {
+						name: 1,
+						totalOrdered: 1,
+						totalValue: 1,
+						frequency: '$orderCount',
+						avgPrice: 1,
+					},
+				},
+				{
+					$sort: { totalOrdered: -1 },
+				},
+				{
+					$limit: 20,
+				},
+			])
+
+			// Get previous period for trend calculation
+			const previousProductAnalytics = await Order.aggregate([
+				{
+					$match: {
+						createdAt: { $gte: previousStartDate, $lt: startDate },
+					},
+				},
+				{
+					$unwind: '$items',
+				},
+				{
+					$group: {
+						_id: '$items.product',
+						totalOrdered: { $sum: '$items.quantity' },
+					},
+				},
+			])
+
+			// Calculate trends
+			const productInsights = currentProductAnalytics.map(current => {
+				const previous = previousProductAnalytics.find(
+					p => p._id.toString() === current._id.toString()
+				)
+				const previousOrdered = previous ? previous.totalOrdered : 0
+
+				let trend = 'stable'
+				if (previousOrdered === 0 && current.totalOrdered > 0) {
+					trend = 'up'
+				} else if (previousOrdered > 0) {
+					const changePercent =
+						((current.totalOrdered - previousOrdered) / previousOrdered) * 100
+					if (changePercent > 10) trend = 'up'
+					else if (changePercent < -10) trend = 'down'
+				}
+
+				return {
+					name: current.name,
+					totalOrdered: current.totalOrdered,
+					totalValue: current.totalValue || 0,
+					frequency: current.frequency,
+					avgPrice: current.avgPrice || 0,
+					trend,
+				}
+			})
+
+			res.json({ products: productInsights })
+		} catch (error) {
+			console.error('Get product insights error:', error)
+			res
+				.status(500)
+				.json({ message: 'Server error fetching product insights' })
+		}
+	}
+)
+
+// Get financial metrics (admin/editor only)
+router.get(
+	'/analytics/financial',
+	authenticate,
+	requireAdminOrEditor,
+	async (req, res) => {
+		try {
+			const { timeframe = 'week' } = req.query
+
+			const now = new Date()
+			const startOfToday = new Date(
+				now.getFullYear(),
+				now.getMonth(),
+				now.getDate()
+			)
+			const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+
+			// Calculate financial metrics
+			const [dailySpending, weeklySpending, monthlySpending, branchSpending] =
+				await Promise.all([
+					// Daily spending
+					Order.aggregate([
+						{
+							$match: {
+								createdAt: { $gte: startOfToday },
+								status: { $in: ['pending', 'approved', 'completed'] },
+							},
+						},
+						{
+							$unwind: '$items',
+						},
+						{
+							$lookup: {
+								from: 'products',
+								localField: 'items.product',
+								foreignField: '_id',
+								as: 'productDetails',
+							},
+						},
+						{
+							$unwind: '$productDetails',
+						},
+						{
+							$group: {
+								_id: null,
+								total: {
+									$sum: {
+										$multiply: ['$items.quantity', '$productDetails.price'],
+									},
+								},
+							},
+						},
+					]),
+					// Weekly spending
+					Order.aggregate([
+						{
+							$match: {
+								createdAt: { $gte: startOfWeek },
+								status: { $in: ['pending', 'approved', 'completed'] },
+							},
+						},
+						{
+							$unwind: '$items',
+						},
+						{
+							$lookup: {
+								from: 'products',
+								localField: 'items.product',
+								foreignField: '_id',
+								as: 'productDetails',
+							},
+						},
+						{
+							$unwind: '$productDetails',
+						},
+						{
+							$group: {
+								_id: null,
+								total: {
+									$sum: {
+										$multiply: ['$items.quantity', '$productDetails.price'],
+									},
+								},
+							},
+						},
+					]),
+					// Monthly spending
+					Order.aggregate([
+						{
+							$match: {
+								createdAt: { $gte: startOfMonth },
+								status: { $in: ['pending', 'approved', 'completed'] },
+							},
+						},
+						{
+							$unwind: '$items',
+						},
+						{
+							$lookup: {
+								from: 'products',
+								localField: 'items.product',
+								foreignField: '_id',
+								as: 'productDetails',
+							},
+						},
+						{
+							$unwind: '$productDetails',
+						},
+						{
+							$group: {
+								_id: null,
+								total: {
+									$sum: {
+										$multiply: ['$items.quantity', '$productDetails.price'],
+									},
+								},
+							},
+						},
+					]),
+					// Branch spending
+					Order.aggregate([
+						{
+							$match: {
+								createdAt: { $gte: startOfMonth },
+								status: { $in: ['pending', 'approved', 'completed'] },
+							},
+						},
+						{
+							$unwind: '$items',
+						},
+						{
+							$lookup: {
+								from: 'products',
+								localField: 'items.product',
+								foreignField: '_id',
+								as: 'productDetails',
+							},
+						},
+						{
+							$unwind: '$productDetails',
+						},
+						{
+							$group: {
+								_id: '$branch',
+								spending: {
+									$sum: {
+										$multiply: ['$items.quantity', '$productDetails.price'],
+									},
+								},
+							},
+						},
+						{
+							$project: {
+								branch: '$_id',
+								spending: 1,
+								_id: 0,
+							},
+						},
+						{
+							$sort: { spending: -1 },
+						},
+					]),
+				])
+
+			// Calculate average order value
+			const totalOrders = await Order.countDocuments({
+				createdAt: { $gte: startOfMonth },
+				status: { $in: ['pending', 'approved', 'completed'] },
+			})
+
+			const monthlyTotal = monthlySpending[0]?.total || 0
+			const avgOrderValue = totalOrders > 0 ? monthlyTotal / totalOrders : 0
+
+			res.json({
+				dailySpending: dailySpending[0]?.total || 0,
+				weeklySpending: weeklySpending[0]?.total || 0,
+				monthlySpending: monthlyTotal,
+				avgOrderValue,
+				topSpendingBranches: branchSpending || [],
+			})
+		} catch (error) {
+			console.error('Get financial metrics error:', error)
+			res
+				.status(500)
+				.json({ message: 'Server error fetching financial metrics' })
 		}
 	}
 )
