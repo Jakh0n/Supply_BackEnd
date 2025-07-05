@@ -23,7 +23,7 @@ app.use(
 		origin: [
 			process.env.FRONTEND_URL,
 			'http://localhost:3000',
-			'https://depo-backend-vr7u.onrender.com/api',
+			'https://depo-backend-vr7u.onrender.com',
 		],
 		credentials: true,
 		methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
