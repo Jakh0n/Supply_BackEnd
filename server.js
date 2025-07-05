@@ -19,6 +19,7 @@ const app = express()
 const allowedOrigins = [
 	'http://localhost:3000',
 	'https://depo-delta.vercel.app',
+	'https://depo-backend-vr7u.onrender.com',
 ]
 
 app.use(
