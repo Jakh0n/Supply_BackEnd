@@ -16,25 +16,19 @@ const branchRoutes = require('./routes/branches')
 const app = express()
 
 // Middleware
-const allowedOrigins = [
-	'http://localhost:3000',
-	'https://depo-delta.vercel.app',
-	'https://depo-backend-vr7u.onrender.com',
-]
 
+// CORS configuration
 app.use(
 	cors({
-		origin: function (origin, callback) {
-			// Allow requests with no origin (like mobile apps or curl requests)
-			if (!origin) return callback(null, true)
-
-			if (allowedOrigins.indexOf(origin) !== -1) {
-				callback(null, true)
-			} else {
-				callback(new Error('Not allowed by CORS'))
-			}
-		},
+		origin: [
+			process.env.FRONTEND_URL,
+			'http://localhost:3000',
+			'https://depo-backend-vr7u.onrender.com/api',
+		],
 		credentials: true,
+		methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+		allowedHeaders: ['Content-Type', 'Authorization'],
+		exposedHeaders: ['Content-Range', 'X-Content-Range'],
 	})
 )
 app.use(express.json())
