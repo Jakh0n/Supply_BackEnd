@@ -611,33 +611,55 @@ router.get(
 	requireAdminOrEditor,
 	async (req, res) => {
 		try {
-			const { timeframe = 'week' } = req.query
+			const { timeframe = 'week', month, year } = req.query
 
-			// Calculate date range based on timeframe
+			// Calculate date range based on month/year or timeframe
 			const now = new Date()
 			let startDate = new Date()
 			let previousStartDate = new Date()
 
-			switch (timeframe) {
-				case 'day':
-					startDate.setDate(now.getDate() - 1)
-					previousStartDate.setDate(now.getDate() - 2)
-					break
-				case 'week':
-					startDate.setDate(now.getDate() - 7)
-					previousStartDate.setDate(now.getDate() - 14)
-					break
-				case 'month':
-					startDate.setMonth(now.getMonth() - 1)
-					previousStartDate.setMonth(now.getMonth() - 2)
-					break
-				case 'quarter':
-					startDate.setMonth(now.getMonth() - 3)
-					previousStartDate.setMonth(now.getMonth() - 6)
-					break
-				default:
-					startDate.setDate(now.getDate() - 7)
-					previousStartDate.setDate(now.getDate() - 14)
+			// If month and year are provided, use them for filtering
+			if (month && year) {
+				const selectedMonth = parseInt(month) - 1 // JavaScript months are 0-based
+				const selectedYear = parseInt(year)
+
+				// Set start date to the first day of the selected month
+				startDate = new Date(selectedYear, selectedMonth, 1)
+
+				// Set end date to the first day of the next month
+				const endDate = new Date(selectedYear, selectedMonth + 1, 1)
+
+				// Set previous period dates for comparison
+				const prevMonth = selectedMonth === 0 ? 11 : selectedMonth - 1
+				const prevYear = selectedMonth === 0 ? selectedYear - 1 : selectedYear
+				previousStartDate = new Date(prevYear, prevMonth, 1)
+				const previousEndDate = new Date(prevYear, prevMonth + 1, 1)
+
+				// Override now with endDate for month/year filtering
+				now.setTime(endDate.getTime())
+			} else {
+				// Use existing timeframe logic
+				switch (timeframe) {
+					case 'day':
+						startDate.setDate(now.getDate() - 1)
+						previousStartDate.setDate(now.getDate() - 2)
+						break
+					case 'week':
+						startDate.setDate(now.getDate() - 7)
+						previousStartDate.setDate(now.getDate() - 14)
+						break
+					case 'month':
+						startDate.setMonth(now.getMonth() - 1)
+						previousStartDate.setMonth(now.getMonth() - 2)
+						break
+					case 'quarter':
+						startDate.setMonth(now.getMonth() - 3)
+						previousStartDate.setMonth(now.getMonth() - 6)
+						break
+					default:
+						startDate.setDate(now.getDate() - 7)
+						previousStartDate.setDate(now.getDate() - 14)
+				}
 			}
 
 			// Get current period analytics
