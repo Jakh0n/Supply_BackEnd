@@ -15,7 +15,15 @@ const router = express.Router()
 // Get orders based on user role
 router.get('/', authenticate, async (req, res) => {
 	try {
-		const { date, branch, status, page = 1, limit = 10 } = req.query
+		const {
+			date,
+			month,
+			year,
+			branch,
+			status,
+			page = 1,
+			limit = 10,
+		} = req.query
 		const filter = {}
 
 		// Workers can only see their own orders
@@ -28,13 +36,29 @@ router.get('/', authenticate, async (req, res) => {
 			filter.branch = branch
 		}
 
-		// Filter by date
+		// Filter by date - support both single date and month/year filtering
 		if (date) {
+			// Single date filtering (existing functionality)
 			const startDate = new Date(date)
 			const endDate = new Date(date)
 			endDate.setDate(endDate.getDate() + 1)
 
-			filter.requestedDate = {
+			filter.createdAt = {
+				$gte: startDate,
+				$lt: endDate,
+			}
+		} else if (month && year) {
+			// Month/year filtering (new functionality)
+			const selectedMonth = parseInt(month) - 1 // JavaScript months are 0-based
+			const selectedYear = parseInt(year)
+
+			// Set start date to the first day of the selected month
+			const startDate = new Date(selectedYear, selectedMonth, 1)
+
+			// Set end date to the first day of the next month
+			const endDate = new Date(selectedYear, selectedMonth + 1, 1)
+
+			filter.createdAt = {
 				$gte: startDate,
 				$lt: endDate,
 			}
