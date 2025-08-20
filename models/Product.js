@@ -58,6 +58,22 @@ const productSchema = new mongoose.Schema(
 				message: 'Price must be a valid positive number',
 			},
 		},
+		images: [
+			{
+				url: {
+					type: String,
+					required: true,
+				},
+				publicId: {
+					type: String,
+					required: true,
+				},
+				isPrimary: {
+					type: Boolean,
+					default: false,
+				},
+			},
+		],
 		isActive: {
 			type: Boolean,
 			default: true,
