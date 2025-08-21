@@ -73,7 +73,7 @@ router.get('/', authenticate, async (req, res) => {
 
 		const orders = await Order.find(filter)
 			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category price')
+			.populate('items.product', 'name unit category price images')
 			.populate('processedBy', 'username')
 			.sort({ createdAt: -1 })
 			.skip(skip)
@@ -100,7 +100,7 @@ router.get('/:id', authenticate, async (req, res) => {
 	try {
 		const order = await Order.findById(req.params.id)
 			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category supplier price')
+			.populate('items.product', 'name unit category supplier price images')
 			.populate('processedBy', 'username')
 
 		if (!order) {
@@ -563,7 +563,7 @@ router.get(
 
 			const orders = await Order.find(filter)
 				.populate('worker', 'username branch')
-				.populate('items.product', 'name unit category supplier price')
+				.populate('items.product', 'name unit category supplier price images')
 				.sort({ branch: 1, worker: 1 })
 
 			res.json({ orders })
