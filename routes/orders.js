@@ -593,6 +593,77 @@ router.get(
 				today.getDate() + 1
 			)
 
+			// Calculate total revenue from all approved/completed orders
+			const revenueCalculation = await Order.aggregate([
+				{
+					$match: {
+						status: { $in: ['approved', 'completed'] },
+					},
+				},
+				{
+					$unwind: '$items',
+				},
+				{
+					$lookup: {
+						from: 'products',
+						localField: 'items.product',
+						foreignField: '_id',
+						as: 'productDetails',
+					},
+				},
+				{
+					$unwind: '$productDetails',
+				},
+				{
+					$group: {
+						_id: null,
+						totalRevenue: {
+							$sum: {
+								$multiply: ['$items.quantity', '$productDetails.price'],
+							},
+						},
+						totalItems: { $sum: '$items.quantity' },
+						avgOrderValue: {
+							$avg: { $multiply: ['$items.quantity', '$productDetails.price'] },
+						},
+					},
+				},
+			])
+
+			// Calculate today's revenue
+			const todayRevenue = await Order.aggregate([
+				{
+					$match: {
+						createdAt: { $gte: startOfDay, $lt: endOfDay },
+						status: { $in: ['approved', 'completed'] },
+					},
+				},
+				{
+					$unwind: '$items',
+				},
+				{
+					$lookup: {
+						from: 'products',
+						localField: 'items.product',
+						foreignField: '_id',
+						as: 'productDetails',
+					},
+				},
+				{
+					$unwind: '$productDetails',
+				},
+				{
+					$group: {
+						_id: null,
+						todayRevenue: {
+							$sum: {
+								$multiply: ['$items.quantity', '$productDetails.price'],
+							},
+						},
+					},
+				},
+			])
+
 			const [todayOrders, totalOrders, pendingOrders, branchStats] =
 				await Promise.all([
 					Order.countDocuments({
@@ -613,10 +684,16 @@ router.get(
 					]),
 				])
 
+			const totalRevenue = revenueCalculation[0]?.totalRevenue || 0
+			const todayRevenueAmount = todayRevenue[0]?.todayRevenue || 0
+
 			res.json({
 				todayOrders,
 				totalOrders,
 				pendingOrders,
+				totalRevenue,
+				todayRevenue: todayRevenueAmount,
+				totalItems: revenueCalculation[0]?.totalItems || 0,
 				branchStats,
 			})
 		} catch (error) {
@@ -1146,15 +1223,167 @@ router.get(
 				status: { $in: ['pending', 'approved', 'completed'] },
 			})
 
+			// Calculate previous period for growth comparison
+			const startOfYesterday = new Date(
+				startOfToday.getTime() - 24 * 60 * 60 * 1000
+			)
+			const startOfPreviousWeek = new Date(
+				now.getTime() - 14 * 24 * 60 * 60 * 1000
+			)
+			const startOfPreviousMonth = new Date(
+				now.getFullYear(),
+				now.getMonth() - 1,
+				1
+			)
+			const endOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0)
+
+			// Get previous period data for growth calculation
+			const [
+				previousDailySpending,
+				previousWeeklySpending,
+				previousMonthlySpending,
+			] = await Promise.all([
+				// Previous daily spending
+				Order.aggregate([
+					{
+						$match: {
+							createdAt: { $gte: startOfYesterday, $lt: startOfToday },
+							status: { $in: ['approved', 'completed'] },
+						},
+					},
+					{ $unwind: '$items' },
+					{
+						$lookup: {
+							from: 'products',
+							localField: 'items.product',
+							foreignField: '_id',
+							as: 'productDetails',
+						},
+					},
+					{ $unwind: '$productDetails' },
+					{
+						$group: {
+							_id: null,
+							total: {
+								$sum: {
+									$multiply: ['$items.quantity', '$productDetails.price'],
+								},
+							},
+						},
+					},
+				]),
+				// Previous weekly spending
+				Order.aggregate([
+					{
+						$match: {
+							createdAt: { $gte: startOfPreviousWeek, $lt: startOfWeek },
+							status: { $in: ['approved', 'completed'] },
+						},
+					},
+					{ $unwind: '$items' },
+					{
+						$lookup: {
+							from: 'products',
+							localField: 'items.product',
+							foreignField: '_id',
+							as: 'productDetails',
+						},
+					},
+					{ $unwind: '$productDetails' },
+					{
+						$group: {
+							_id: null,
+							total: {
+								$sum: {
+									$multiply: ['$items.quantity', '$productDetails.price'],
+								},
+							},
+						},
+					},
+				]),
+				// Previous monthly spending
+				Order.aggregate([
+					{
+						$match: {
+							createdAt: {
+								$gte: startOfPreviousMonth,
+								$lte: endOfPreviousMonth,
+							},
+							status: { $in: ['approved', 'completed'] },
+						},
+					},
+					{ $unwind: '$items' },
+					{
+						$lookup: {
+							from: 'products',
+							localField: 'items.product',
+							foreignField: '_id',
+							as: 'productDetails',
+						},
+					},
+					{ $unwind: '$productDetails' },
+					{
+						$group: {
+							_id: null,
+							total: {
+								$sum: {
+									$multiply: ['$items.quantity', '$productDetails.price'],
+								},
+							},
+						},
+					},
+				]),
+			])
+
+			// Calculate growth percentages
+			const calculateGrowth = (current, previous) => {
+				if (!previous || previous === 0) return current > 0 ? 100 : 0
+				return ((current - previous) / previous) * 100
+			}
+
 			const monthlyTotal = monthlySpending[0]?.total || 0
 			const avgOrderValue = totalOrders > 0 ? monthlyTotal / totalOrders : 0
+			const currentDaily = dailySpending[0]?.total || 0
+			const currentWeekly = weeklySpending[0]?.total || 0
+			const prevDaily = previousDailySpending[0]?.total || 0
+			const prevWeekly = previousWeeklySpending[0]?.total || 0
+			const prevMonthly = previousMonthlySpending[0]?.total || 0
 
 			res.json({
-				dailySpending: dailySpending[0]?.total || 0,
-				weeklySpending: weeklySpending[0]?.total || 0,
+				// Current metrics
+				dailySpending: currentDaily,
+				weeklySpending: currentWeekly,
 				monthlySpending: monthlyTotal,
 				avgOrderValue,
+
+				// Growth metrics with real historical data
+				dailyGrowth: calculateGrowth(currentDaily, prevDaily),
+				weeklyGrowth: calculateGrowth(currentWeekly, prevWeekly),
+				monthlyGrowth: calculateGrowth(monthlyTotal, prevMonthly),
+				avgOrderGrowth:
+					totalOrders > 0
+						? calculateGrowth(
+								avgOrderValue,
+								prevMonthly / Math.max(totalOrders, 1)
+						  )
+						: 0,
+
+				// Previous period data for comparison
+				previousPeriod: {
+					dailySpending: prevDaily,
+					weeklySpending: prevWeekly,
+					monthlySpending: prevMonthly,
+				},
+
+				// Additional insights
+				totalOrders,
 				topSpendingBranches: branchSpending || [],
+
+				// Status breakdown
+				statusBreakdown: {
+					completed: monthlyTotal,
+					pending: 0, // Will be calculated if needed
+				},
 			})
 		} catch (error) {
 			console.error('Get financial metrics error:', error)
