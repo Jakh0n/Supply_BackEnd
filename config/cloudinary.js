@@ -1,6 +1,6 @@
 const cloudinary = require('cloudinary').v2
-const { CloudinaryStorage } = require('multer-storage-cloudinary')
 const multer = require('multer')
+const streamifier = require('streamifier')
 
 // Configure Cloudinary
 cloudinary.config({
@@ -9,19 +9,8 @@ cloudinary.config({
 	api_secret: process.env.CLOUDINARY_API_SECRET,
 })
 
-// Configure Cloudinary storage for multer
-const storage = new CloudinaryStorage({
-	cloudinary: cloudinary,
-	params: {
-		folder: 'depo-products', // Folder name in your Cloudinary account
-		allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-		transformation: [
-			{ width: 800, height: 600, crop: 'limit' }, // Optimize images
-			{ quality: 'auto' },
-			{ fetch_format: 'auto' },
-		],
-	},
-})
+// Configure multer to use memory storage (stores files in buffer)
+const storage = multer.memoryStorage()
 
 // Create multer upload middleware
 const upload = multer({
@@ -38,4 +27,33 @@ const upload = multer({
 	},
 })
 
-module.exports = { cloudinary, upload }
+// Function to upload buffer to Cloudinary
+const uploadToCloudinary = (buffer, options = {}) => {
+	return new Promise((resolve, reject) => {
+		const uploadOptions = {
+			folder: 'depo-products',
+			allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+			transformation: [
+				{ width: 800, height: 600, crop: 'limit' },
+				{ quality: 'auto' },
+				{ fetch_format: 'auto' },
+			],
+			...options, // Allow custom options to override defaults
+		}
+
+		const uploadStream = cloudinary.uploader.upload_stream(
+			uploadOptions,
+			(error, result) => {
+				if (error) {
+					reject(error)
+				} else {
+					resolve(result)
+				}
+			}
+		)
+
+		streamifier.createReadStream(buffer).pipe(uploadStream)
+	})
+}
+
+module.exports = { cloudinary, upload, uploadToCloudinary }

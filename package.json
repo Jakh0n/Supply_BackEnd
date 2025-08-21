@@ -26,8 +26,8 @@
 		"jsonwebtoken": "^9.0.2",
 		"mongoose": "^8.16.1",
 		"multer": "^2.0.2",
-		"multer-storage-cloudinary": "^4.0.0",
 		"puppeteer": "^24.11.2",
+		"streamifier": "^0.1.1",
 		"uuid": "^11.1.0"
 	},
 	"devDependencies": {

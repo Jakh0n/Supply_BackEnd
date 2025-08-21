@@ -2,7 +2,11 @@ const express = require('express')
 const { body, validationResult } = require('express-validator')
 const Product = require('../models/Product')
 const { authenticate, requireAdmin } = require('../middleware/auth')
-const { cloudinary, upload } = require('../config/cloudinary')
+const {
+	cloudinary,
+	upload,
+	uploadToCloudinary,
+} = require('../config/cloudinary')
 
 const router = express.Router()
 
@@ -76,11 +80,17 @@ router.post(
 				return res.status(400).json({ message: 'No images provided' })
 			}
 
-			const uploadedImages = req.files.map(file => ({
-				url: file.path,
-				publicId: file.filename,
-				isPrimary: false,
-			}))
+			// Upload each file to Cloudinary
+			const uploadPromises = req.files.map(async file => {
+				const result = await uploadToCloudinary(file.buffer)
+				return {
+					url: result.secure_url,
+					publicId: result.public_id,
+					isPrimary: false,
+				}
+			})
+
+			const uploadedImages = await Promise.all(uploadPromises)
 
 			// Set first image as primary by default
 			if (uploadedImages.length > 0) {
