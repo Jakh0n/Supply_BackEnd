@@ -11,76 +11,12 @@ const generateToken = userId => {
 	return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' })
 }
 
-// Register new user
-router.post(
-	'/register',
-	[
-		body('username')
-			.isLength({ min: 3, max: 30 })
-			.withMessage('Username must be between 3 and 30 characters')
-			.matches(/^[a-zA-Z0-9_]+$/)
-			.withMessage(
-				'Username can only contain letters, numbers, and underscores'
-			),
-		body('password')
-			.isLength({ min: 6 })
-			.withMessage('Password must be at least 6 characters long'),
-		body('position')
-			.isIn(['admin', 'worker', 'editor'])
-			.withMessage('Position must be admin, worker, or editor'),
-		body('branch')
-			.optional()
-			.isLength({ min: 1 })
-			.withMessage('Branch name must not be empty if provided'),
-	],
-	async (req, res) => {
-		try {
-			const errors = validationResult(req)
-			if (!errors.isEmpty()) {
-				return res.status(400).json({
-					message: 'Validation failed',
-					errors: errors.array(),
-				})
-			}
-
-			const { username, password, position, branch } = req.body
-
-			// Check if username already exists
-			const existingUser = await User.findOne({ username })
-			if (existingUser) {
-				return res.status(400).json({ message: 'Username already exists' })
-			}
-
-			// Create new user
-			const userData = { username, password, position }
-
-			// Add branch if provided (optional for workers, not required during registration)
-			if (branch) {
-				userData.branch = branch
-			}
-
-			const user = new User(userData)
-			await user.save()
-
-			// Generate token
-			const token = generateToken(user._id)
-
-			res.status(201).json({
-				message: 'User registered successfully',
-				token,
-				user: {
-					id: user._id,
-					username: user.username,
-					position: user.position,
-					branch: user.branch || null,
-				},
-			})
-		} catch (error) {
-			console.error('Registration error:', error)
-			res.status(500).json({ message: 'Server error during registration' })
-		}
-	}
-)
+// Register new user - DISABLED
+router.post('/register', (req, res) => {
+	res.status(403).json({ 
+		message: 'Registration is disabled. Please contact an administrator to create your account.' 
+	})
+})
 
 // Login user
 router.post(

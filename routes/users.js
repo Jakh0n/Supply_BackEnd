@@ -81,7 +81,7 @@ router.post(
 		body('branch')
 			.optional()
 			.isLength({ min: 1 })
-			.withMessage('Branch is required for workers'),
+			.withMessage('Branch name must not be empty if provided'),
 	],
 	async (req, res) => {
 		try {
@@ -101,16 +101,9 @@ router.post(
 				return res.status(400).json({ message: 'Username already exists' })
 			}
 
-			// Validate branch for workers
-			if (position === 'worker' && !branch) {
-				return res
-					.status(400)
-					.json({ message: 'Branch is required for workers' })
-			}
-
 			// Create new user
 			const userData = { username, password, position }
-			if (position === 'worker') {
+			if (branch) {
 				userData.branch = branch
 			}
 
@@ -160,7 +153,7 @@ router.put(
 		body('branch')
 			.optional()
 			.isLength({ min: 1 })
-			.withMessage('Branch cannot be empty'),
+			.withMessage('Branch name must not be empty if provided'),
 	],
 	async (req, res) => {
 		try {
@@ -197,14 +190,6 @@ router.put(
 				if (existingUser) {
 					return res.status(400).json({ message: 'Username already exists' })
 				}
-			}
-
-			// Validate branch for workers
-			const newPosition = req.body.position || user.position
-			if (newPosition === 'worker' && !req.body.branch && !user.branch) {
-				return res
-					.status(400)
-					.json({ message: 'Branch is required for workers' })
 			}
 
 			// Remove branch if changing from worker to admin
