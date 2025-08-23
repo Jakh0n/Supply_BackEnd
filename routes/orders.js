@@ -373,7 +373,7 @@ router.post(
 				orderNumber,
 				worker: req.user._id,
 				branch: branch,
-				requestedDate: requestedDateTime,
+				requestedDate: requestedDate,
 				items,
 				notes,
 			}
