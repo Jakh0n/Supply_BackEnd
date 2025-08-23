@@ -232,13 +232,17 @@ router.post(
 			}
 
 			// Check if requested date is not in the past
-			const requestedDateTime = new Date(requestedDate)
+			// Parse date string as local date to avoid timezone issues
+			const [year, month, day] = requestedDate.split('-').map(Number)
+			const requestedDateTime = new Date(year, month - 1, day) // month is 0-based
+
 			const today = new Date()
 			today.setHours(0, 0, 0, 0)
 
 			console.log('Date validation:')
-			console.log('- requestedDateTime:', requestedDateTime)
-			console.log('- today:', today)
+			console.log('- requestedDate string:', requestedDate)
+			console.log('- requestedDateTime (local):', requestedDateTime)
+			console.log('- today (local):', today)
 
 			if (requestedDateTime < today) {
 				console.log('Date validation failed - date in past')
@@ -478,7 +482,10 @@ router.put(
 
 			const updateData = {}
 			if (req.body.requestedDate) {
-				const requestedDateTime = new Date(req.body.requestedDate)
+				// Parse date string as local date to avoid timezone issues
+				const [year, month, day] = req.body.requestedDate.split('-').map(Number)
+				const requestedDateTime = new Date(year, month - 1, day) // month is 0-based
+
 				const today = new Date()
 				today.setHours(0, 0, 0, 0)
 
