@@ -192,7 +192,8 @@ router.post(
 
 			const errors = validationResult(req)
 			if (!errors.isEmpty()) {
-				console.log('Validation errors:', errors.array())
+				console.log('=== VALIDATION ERRORS ===')
+				console.log('Errors:', JSON.stringify(errors.array(), null, 2))
 				return res.status(400).json({
 					message: 'Validation failed',
 					errors: errors.array(),
@@ -210,46 +211,105 @@ router.post(
 
 			// Validate that all products exist and are active
 			const productIds = items.map(item => item.product)
+			console.log('=== PRODUCT VALIDATION DEBUG ===')
 			console.log('Product IDs to validate:', productIds)
+			console.log(
+				'Product IDs types:',
+				productIds.map(id => typeof id)
+			)
 
-			const products = await Product.find({
+			// Check if all products exist (including inactive ones)
+			const allProducts = await Product.find({
+				_id: { $in: productIds },
+			})
+
+			console.log('All products found (active + inactive):', allProducts.length)
+			console.log(
+				'All products details:',
+				allProducts.map(p => ({
+					id: p._id,
+					name: p.name,
+					isActive: p.isActive,
+				}))
+			)
+
+			// Check for active products only
+			const activeProducts = await Product.find({
 				_id: { $in: productIds },
 				isActive: true,
 			})
 
+			console.log('Active products found:', activeProducts.length)
 			console.log(
-				'Found products:',
-				products.length,
-				'out of',
-				productIds.length
+				'Active products details:',
+				activeProducts.map(p => ({
+					id: p._id,
+					name: p.name,
+					isActive: p.isActive,
+				}))
 			)
 
-			if (products.length !== productIds.length) {
-				console.log('Product validation failed')
+			// Find missing products
+			const foundIds = allProducts.map(p => p._id.toString())
+			const missingIds = productIds.filter(
+				id => !foundIds.includes(id.toString())
+			)
+			if (missingIds.length > 0) {
+				console.log('❌ Missing products:', missingIds)
+			}
+
+			// Find inactive products
+			const inactiveProducts = allProducts.filter(p => !p.isActive)
+			if (inactiveProducts.length > 0) {
+				console.log(
+					'❌ Inactive products:',
+					inactiveProducts.map(p => ({
+						id: p._id,
+						name: p.name,
+					}))
+				)
+			}
+
+			if (activeProducts.length !== productIds.length) {
+				console.log('❌ Product validation failed')
+				console.log(
+					'Expected:',
+					productIds.length,
+					'Got:',
+					activeProducts.length
+				)
 				return res.status(400).json({
 					message: 'One or more products are invalid or inactive',
+					details: {
+						totalRequested: productIds.length,
+						activeFound: activeProducts.length,
+						missingProducts: missingIds,
+						inactiveProducts: inactiveProducts.map(p => p.name),
+					},
 				})
 			}
 
-			// Check if requested date is not in the past
-			// Parse date string as local date to avoid timezone issues
-			const [year, month, day] = requestedDate.split('-').map(Number)
-			const requestedDateTime = new Date(year, month - 1, day) // month is 0-based
+			console.log('✅ Product validation passed')
 
+			// Check if requested date is not in the past
+			// Temporarily disable date validation for debugging
+			console.log('=== DATE VALIDATION DEBUG ===')
+			console.log('- requestedDate string:', requestedDate)
+			console.log('⚠️  DATE VALIDATION TEMPORARILY DISABLED FOR DEBUGGING')
+
+			// TODO: Re-enable date validation once production issue is resolved
+			/*
+			const [year, month, day] = requestedDate.split('-').map(Number)
+			const requestedDateTime = new Date(year, month - 1, day)
 			const today = new Date()
 			today.setHours(0, 0, 0, 0)
 
-			console.log('Date validation:')
-			console.log('- requestedDate string:', requestedDate)
-			console.log('- requestedDateTime (local):', requestedDateTime)
-			console.log('- today (local):', today)
-
 			if (requestedDateTime < today) {
-				console.log('Date validation failed - date in past')
 				return res.status(400).json({
 					message: 'Requested date cannot be in the past',
 				})
 			}
+			*/
 
 			console.log('Creating order object...')
 
