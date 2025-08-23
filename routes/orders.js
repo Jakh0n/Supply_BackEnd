@@ -43,7 +43,7 @@ router.get('/', authenticate, async (req, res) => {
 			const endDate = new Date(date)
 			endDate.setDate(endDate.getDate() + 1)
 
-			filter.createdAt = {
+			filter.requestedDate = {
 				$gte: startDate,
 				$lt: endDate,
 			}
@@ -58,7 +58,7 @@ router.get('/', authenticate, async (req, res) => {
 			// Set end date to the first day of the next month
 			const endDate = new Date(selectedYear, selectedMonth + 1, 1)
 
-			filter.createdAt = {
+			filter.requestedDate = {
 				$gte: startDate,
 				$lt: endDate,
 			}
