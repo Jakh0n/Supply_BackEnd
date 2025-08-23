@@ -664,12 +664,15 @@ router.get(
 				},
 			])
 
-			const [todayOrders, totalOrders, pendingOrders, branchStats] =
+			const [todayOrders, todayCompletedOrders, pendingOrders, branchStats] =
 				await Promise.all([
 					Order.countDocuments({
 						createdAt: { $gte: startOfDay, $lt: endOfDay },
 					}),
-					Order.countDocuments(),
+					Order.countDocuments({
+						createdAt: { $gte: startOfDay, $lt: endOfDay },
+						status: { $in: ['approved', 'completed'] },
+					}),
 					Order.countDocuments({ status: 'pending' }),
 					Order.aggregate([
 						{
@@ -689,7 +692,7 @@ router.get(
 
 			res.json({
 				todayOrders,
-				totalOrders,
+				todayCompletedOrders,
 				pendingOrders,
 				totalRevenue,
 				todayRevenue: todayRevenueAmount,
