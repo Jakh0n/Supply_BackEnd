@@ -15,6 +15,15 @@ const router = express.Router()
 // Get orders based on user role
 router.get('/', authenticate, async (req, res) => {
 	try {
+		console.log('🔍 [BACKEND DEBUG] Orders API request:', {
+			userId: req.user._id,
+			username: req.user.username,
+			position: req.user.position,
+			isActive: req.user.isActive,
+			viewAll: req.query.viewAll,
+			queryParams: req.query,
+		})
+
 		const {
 			date,
 			month,
@@ -26,13 +35,25 @@ router.get('/', authenticate, async (req, res) => {
 		} = req.query
 		const filter = {}
 
-		// Workers can only see their own orders
+		// Workers can see their own orders or all orders if specifically requested
 		if (req.user.position === 'worker') {
-			filter.worker = req.user._id
+			// Allow workers to see all orders when 'viewAll' parameter is true
+			if (req.query.viewAll !== 'true') {
+				console.log('📝 [BACKEND DEBUG] Worker viewing own orders only')
+				filter.worker = req.user._id
+			} else {
+				console.log(
+					'🌐 [BACKEND DEBUG] Worker viewing ALL orders (viewAll=true)'
+				)
+			}
 		}
 
-		// Admins and editors can filter by branch
-		if (branch && ['admin', 'editor'].includes(req.user.position)) {
+		// Admins, editors, and workers (when viewing all) can filter by branch
+		if (
+			branch &&
+			(['admin', 'editor'].includes(req.user.position) ||
+				(req.user.position === 'worker' && req.query.viewAll === 'true'))
+		) {
 			filter.branch = branch
 		}
 
@@ -71,6 +92,8 @@ router.get('/', authenticate, async (req, res) => {
 
 		const skip = (parseInt(page) - 1) * parseInt(limit)
 
+		console.log('🔍 [BACKEND DEBUG] Final MongoDB filter:', filter)
+
 		const orders = await Order.find(filter)
 			.populate('worker', 'username branch')
 			.populate('items.product', 'name unit category price images')
@@ -80,6 +103,14 @@ router.get('/', authenticate, async (req, res) => {
 			.limit(parseInt(limit))
 
 		const total = await Order.countDocuments(filter)
+
+		console.log('✅ [BACKEND DEBUG] Orders query result:', {
+			totalOrdersFound: total,
+			ordersReturned: orders.length,
+			filter: filter,
+			page: parseInt(page),
+			limit: parseInt(limit),
+		})
 
 		res.json({
 			orders,
