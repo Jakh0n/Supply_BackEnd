@@ -132,7 +132,8 @@ router.post(
 				const allowedCategories = [
 					'frozen-products',
 					'main-products',
-					'desserts-drinks',
+					'desserts',
+					'drinks',
 					'packaging-materials',
 					'cleaning-materials',
 				]
@@ -288,7 +289,8 @@ router.put(
 			.isIn([
 				'frozen-products',
 				'main-products',
-				'desserts-drinks',
+				'desserts',
+				'drinks',
 				'packaging-materials',
 				'cleaning-materials',
 			])
@@ -420,7 +422,8 @@ router.get('/meta/categories', authenticate, async (req, res) => {
 		const categories = [
 			'frozen-products',
 			'main-products',
-			'desserts-drinks',
+			'desserts',
+			'drinks',
 			'packaging-materials',
 			'cleaning-materials',
 		]

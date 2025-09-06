@@ -14,7 +14,8 @@ const productSchema = new mongoose.Schema(
 			enum: [
 				'frozen-products',
 				'main-products',
-				'desserts-drinks',
+				'desserts',
+				'drinks',
 				'packaging-materials',
 				'cleaning-materials',
 			],
