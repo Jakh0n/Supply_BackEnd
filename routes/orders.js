@@ -431,6 +431,70 @@ router.post(
 	}
 )
 
+// Bulk update order status (admin/editor only)
+router.patch(
+	'/bulk/status',
+	authenticate,
+	requireAdminOrEditor,
+	[
+		body('status')
+			.isIn(['pending', 'approved', 'rejected', 'completed'])
+			.withMessage('Invalid status'),
+		body('orderIds')
+			.isArray({ min: 1 })
+			.withMessage('At least one order ID is required'),
+		body('orderIds.*').isMongoId().withMessage('Invalid order ID format'),
+		body('adminNotes')
+			.optional()
+			.isLength({ max: 500 })
+			.withMessage('Admin notes cannot exceed 500 characters'),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req)
+			if (!errors.isEmpty()) {
+				return res.status(400).json({
+					message: 'Validation failed',
+					errors: errors.array(),
+				})
+			}
+
+			const { status, orderIds, adminNotes } = req.body
+
+			// Update all orders with the new status
+			const updateResult = await Order.updateMany(
+				{ _id: { $in: orderIds } },
+				{
+					$set: {
+						status,
+						processedBy: req.user._id,
+						processedAt: new Date(),
+						...(adminNotes && { adminNotes }),
+					},
+				}
+			)
+
+			// Get updated orders for response
+			const updatedOrders = await Order.find({
+				_id: { $in: orderIds },
+			}).populate([
+				{ path: 'worker', select: 'username branch' },
+				{ path: 'items.product', select: 'name unit category price' },
+				{ path: 'processedBy', select: 'username' },
+			])
+
+			res.json({
+				message: `Successfully updated ${updateResult.modifiedCount} orders to ${status}`,
+				updatedCount: updateResult.modifiedCount,
+				orders: updatedOrders,
+			})
+		} catch (error) {
+			console.error('Bulk update order status error:', error)
+			res.status(500).json({ message: 'Server error updating order statuses' })
+		}
+	}
+)
+
 // Update order status (admin/editor only)
 router.patch(
 	'/:id/status',
@@ -989,9 +1053,14 @@ router.get(
 					}
 				})
 
-				const mostOrderedProducts = Array.from(productMap.values())
-					.sort((a, b) => b.quantity - a.quantity)
-					.slice(0, 5)
+				const mostOrderedProducts = Array.from(productMap.values()).sort(
+					(a, b) => b.quantity - a.quantity
+				)
+
+				console.log(
+					`Branch ${current.branch} has ${mostOrderedProducts.length} products:`,
+					mostOrderedProducts.map(p => `${p.name} (${p.quantity})`)
+				)
 
 				return {
 					branch: current.branch,
