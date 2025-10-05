@@ -1,6 +1,11 @@
 const express = require('express')
 const ProductPurchase = require('../models/ProductPurchase')
 const { authenticate } = require('../middleware/auth')
+const {
+	cloudinary,
+	upload,
+	uploadToCloudinary,
+} = require('../config/cloudinary')
 const router = express.Router()
 
 // Create a new product purchase
@@ -28,6 +33,7 @@ router.post('/', authenticate, async (req, res) => {
 			unit,
 			notes,
 			branch,
+			images,
 		} = req.body
 
 		// Validate required fields
@@ -84,6 +90,7 @@ router.post('/', authenticate, async (req, res) => {
 			totalAmount,
 			notes,
 			branch,
+			images: images || [],
 			createdBy: req.user.id,
 		})
 
@@ -269,6 +276,7 @@ router.put('/:id', authenticate, async (req, res) => {
 			notes,
 			branch,
 			status,
+			images,
 		} = req.body
 
 		const updateData = {}
@@ -285,6 +293,7 @@ router.put('/:id', authenticate, async (req, res) => {
 		if (notes !== undefined) updateData.notes = notes
 		if (branch !== undefined) updateData.branch = branch
 		if (status !== undefined) updateData.status = status
+		if (images !== undefined) updateData.images = images
 
 		const purchase = await ProductPurchase.findByIdAndUpdate(
 			req.params.id,
@@ -426,5 +435,51 @@ router.get('/stats/summary', authenticate, async (req, res) => {
 		res.status(500).json({ message: 'Internal server error' })
 	}
 })
+
+// Upload images to Cloudinary (admin only)
+router.post(
+	'/upload-images',
+	authenticate,
+	upload.array('images', 5), // Allow up to 5 images
+	async (req, res) => {
+		try {
+			// Only admin can upload images
+			if (req.user.position !== 'admin') {
+				return res.status(403).json({
+					message: 'Access denied. Only administrators can upload images.',
+				})
+			}
+
+			if (!req.files || req.files.length === 0) {
+				return res.status(400).json({ message: 'No images provided' })
+			}
+
+			// Upload each file to Cloudinary
+			const uploadPromises = req.files.map(async file => {
+				const result = await uploadToCloudinary(file.buffer)
+				return {
+					url: result.secure_url,
+					publicId: result.public_id,
+					isPrimary: false,
+				}
+			})
+
+			const uploadedImages = await Promise.all(uploadPromises)
+
+			// Set first image as primary by default
+			if (uploadedImages.length > 0) {
+				uploadedImages[0].isPrimary = true
+			}
+
+			res.json({
+				message: 'Images uploaded successfully',
+				images: uploadedImages,
+			})
+		} catch (error) {
+			console.error('Error uploading images:', error)
+			res.status(500).json({ message: 'Internal server error' })
+		}
+	}
+)
 
 module.exports = router

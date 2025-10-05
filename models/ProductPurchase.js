@@ -86,6 +86,22 @@ const productPurchaseSchema = new mongoose.Schema(
 			trim: true,
 			maxlength: [500, 'Notes cannot exceed 500 characters'],
 		},
+		images: [
+			{
+				url: {
+					type: String,
+					required: true,
+				},
+				publicId: {
+					type: String,
+					required: true,
+				},
+				isPrimary: {
+					type: Boolean,
+					default: false,
+				},
+			},
+		],
 		branch: {
 			type: String,
 			required: [true, 'Branch is required'],
