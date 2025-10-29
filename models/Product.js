@@ -58,6 +58,31 @@ const productSchema = new mongoose.Schema(
 				message: 'Price must be a valid positive number',
 			},
 		},
+		amount: {
+			type: Number,
+			default: 0,
+			min: [0, 'Amount cannot be negative'],
+		},
+		count: {
+			type: Number,
+			default: 0,
+			min: [0, 'Count cannot be negative'],
+		},
+		purchaseSite: {
+			type: String,
+			trim: true,
+			maxlength: [200, 'Purchase site cannot exceed 200 characters'],
+		},
+		contact: {
+			type: String,
+			trim: true,
+			maxlength: [100, 'Contact information cannot exceed 100 characters'],
+		},
+		monthlyUsage: {
+			type: Number,
+			default: 0,
+			min: [0, 'Monthly usage cannot be negative'],
+		},
 		images: [
 			{
 				url: {

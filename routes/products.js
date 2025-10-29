@@ -196,6 +196,23 @@ router.post(
 				}
 				return true
 			}),
+		body('amount')
+			.optional()
+			.isNumeric()
+			.withMessage('Amount must be a number'),
+		body('count').optional().isNumeric().withMessage('Count must be a number'),
+		body('purchaseSite')
+			.optional()
+			.isLength({ max: 200 })
+			.withMessage('Purchase site cannot exceed 200 characters'),
+		body('contact')
+			.optional()
+			.isLength({ max: 100 })
+			.withMessage('Contact information cannot exceed 100 characters'),
+		body('monthlyUsage')
+			.optional()
+			.isNumeric()
+			.withMessage('Monthly usage must be a number'),
 		body('images').optional().isArray().withMessage('Images must be an array'),
 	],
 	async (req, res) => {
@@ -222,8 +239,20 @@ router.post(
 				})
 			}
 
-			const { name, category, unit, description, supplier, price, images } =
-				req.body
+			const {
+				name,
+				category,
+				unit,
+				description,
+				supplier,
+				price,
+				amount,
+				count,
+				purchaseSite,
+				contact,
+				monthlyUsage,
+				images,
+			} = req.body
 
 			// Check if product with same name already exists
 			const existingProduct = await Product.findOne({
@@ -243,6 +272,11 @@ router.post(
 				description: description || undefined,
 				supplier: supplier || undefined,
 				price: typeof price === 'string' ? parseFloat(price) : price,
+				amount: amount || 0,
+				count: count || 0,
+				purchaseSite: purchaseSite || undefined,
+				contact: contact || undefined,
+				monthlyUsage: monthlyUsage || 0,
 				images: images || [],
 				createdBy: req.user._id,
 			})
