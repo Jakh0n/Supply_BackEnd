@@ -137,6 +137,7 @@ router.post(
 					'others', // 기타 (Diger)
 					'beverages', // 음료 (Icecek)
 					'packaging-materials', // 포장지 (Paket Malz.)
+					'vegetables', // 야채/과일 (Sebze/Meyve)
 				]
 				console.log('Allowed categories:', allowedCategories)
 				console.log(
@@ -328,6 +329,7 @@ router.put(
 				'drinks',
 				'packaging-materials',
 				'cleaning-materials',
+				'vegetables',
 			])
 			.withMessage('Invalid category'),
 		body('unit')

@@ -17,6 +17,7 @@ const productPurchaseSchema = new mongoose.Schema(
 				'drinks',
 				'packaging-materials',
 				'cleaning-materials',
+				'vegetables',
 			],
 		},
 		productName: {

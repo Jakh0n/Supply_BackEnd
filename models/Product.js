@@ -19,6 +19,7 @@ const productSchema = new mongoose.Schema(
 				'others', // 기타 (Diger)
 				'beverages', // 음료 (Icecek)
 				'packaging-materials', // 포장지 (Paket Malz.)
+				'vegetables', // 야채/과일 (Sebze/Meyve)
 			],
 			default: 'food-products',
 		},
