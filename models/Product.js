@@ -12,16 +12,15 @@ const productSchema = new mongoose.Schema(
 			type: String,
 			required: [true, 'Product category is required'],
 			enum: [
-				'store-supplies', // 매장 용품 (Dukkan Malz.)
-				'food-products', // 식량품 (Gidalar)
-				'cleaning-materials', // 청소용품 (Temizlik Malz.)
-				'frozen-products', // 냉동 체품 (Donuk Malz.)
-				'others', // 기타 (Diger)
-				'beverages', // 음료 (Icecek)
+				'frozen-products',
+				'main-products',
+				'desserts',
+				'drinks',
 				'packaging-materials', // 포장지 (Paket Malz.)
-				'vegetables', // 야채/과일 (Sebze/Meyve)
+				'cleaning-materials',
+				'vegetables',
 			],
-			default: 'food-products',
+			default: 'main-products',
 		},
 		unit: {
 			type: String,
