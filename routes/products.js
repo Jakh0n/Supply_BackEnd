@@ -130,13 +130,17 @@ router.post(
 					typeof value
 				)
 				const allowedCategories = [
-					'frozen-products',
+					'store-supplies',
+					'food-products',
 					'main-products',
 					'desserts',
 					'drinks',
-					'packaging-materials',
+					'beverages',
 					'cleaning-materials',
+					'frozen-products',
+					'packaging-materials',
 					'vegetables',
+					'others',
 				]
 				console.log('Allowed categories:', allowedCategories)
 				console.log(
@@ -322,13 +326,17 @@ router.put(
 		body('category')
 			.optional()
 			.isIn([
-				'frozen-products',
+				'store-supplies',
+				'food-products',
 				'main-products',
 				'desserts',
 				'drinks',
-				'packaging-materials',
+				'beverages',
 				'cleaning-materials',
+				'frozen-products',
+				'packaging-materials',
 				'vegetables',
+				'others',
 			])
 			.withMessage('Invalid category'),
 		body('unit')
@@ -456,13 +464,17 @@ router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
 router.get('/meta/categories', authenticate, async (req, res) => {
 	try {
 		const categories = [
-			'frozen-products',
+			'store-supplies',
+			'food-products',
 			'main-products',
 			'desserts',
 			'drinks',
-			'packaging-materials',
+			'beverages',
 			'cleaning-materials',
+			'frozen-products',
+			'packaging-materials',
 			'vegetables',
+			'others',
 		]
 		res.json({ categories })
 	} catch (error) {
