@@ -1,6 +1,8 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
+const compression = require('compression')
+const helmet = require('helmet')
 const dotenv = require('dotenv')
 
 // Load environment variables
@@ -17,17 +19,29 @@ const drinkOrderRoutes = require('./routes/drink-orders')
 
 const app = express()
 
+// One proxy hop (e.g. Render) so req.ip / rate-limit use X-Forwarded-For correctly
+app.set('trust proxy', 1)
+
+app.use(compression())
+app.use(
+	helmet({
+		crossOriginResourcePolicy: { policy: 'cross-origin' },
+	})
+)
+
 // Middleware
 
-// CORS configuration
+// CORS configuration (omit undefined entries when FRONTEND_URL is unset)
+const allowedOrigins = [
+	process.env.FRONTEND_URL,
+	'http://localhost:3000',
+	'https://depo-backend-vr7u.onrender.com',
+	'https://kingkebaborder.vercel.app',
+].filter(Boolean)
+
 app.use(
 	cors({
-		origin: [
-			process.env.FRONTEND_URL,
-			'http://localhost:3000',
-			'https://depo-backend-vr7u.onrender.com',
-			'https://kingkebaborder.vercel.app',
-		],
+		origin: allowedOrigins,
 		credentials: true,
 		methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
 		allowedHeaders: ['Content-Type', 'Authorization'],

@@ -7,6 +7,7 @@ const {
 	upload,
 	uploadToCloudinary,
 } = require('../config/cloudinary')
+const { escapeRegex } = require('../utils/escapeRegex')
 
 const router = express.Router()
 
@@ -28,16 +29,18 @@ router.get('/', authenticate, async (req, res) => {
 
 		// Search functionality
 		if (search) {
+			const safe = escapeRegex(search)
 			filter.$or = [
-				{ name: { $regex: search, $options: 'i' } },
-				{ description: { $regex: search, $options: 'i' } },
-				{ supplier: { $regex: search, $options: 'i' } },
+				{ name: { $regex: safe, $options: 'i' } },
+				{ description: { $regex: safe, $options: 'i' } },
+				{ supplier: { $regex: safe, $options: 'i' } },
 			]
 		}
 
 		const products = await Product.find(filter)
 			.populate('createdBy', 'username')
 			.sort({ name: 1 })
+			.lean()
 
 		res.json({
 			products,
@@ -261,7 +264,7 @@ router.post(
 
 			// Check if product with same name already exists
 			const existingProduct = await Product.findOne({
-				name: { $regex: new RegExp(`^${name}$`, 'i') },
+				name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' },
 			})
 
 			if (existingProduct) {
@@ -386,7 +389,7 @@ router.put(
 			// Check if new name conflicts with existing product
 			if (req.body.name && req.body.name !== product.name) {
 				const existingProduct = await Product.findOne({
-					name: { $regex: new RegExp(`^${req.body.name}$`, 'i') },
+					name: { $regex: `^${escapeRegex(req.body.name)}$`, $options: 'i' },
 					_id: { $ne: req.params.id },
 				})
 

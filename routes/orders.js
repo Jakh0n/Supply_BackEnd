@@ -15,15 +15,6 @@ const router = express.Router()
 // Get orders based on user role
 router.get('/', authenticate, async (req, res) => {
 	try {
-		console.log('🔍 [BACKEND DEBUG] Orders API request:', {
-			userId: req.user._id,
-			username: req.user.username,
-			position: req.user.position,
-			isActive: req.user.isActive,
-			viewAll: req.query.viewAll,
-			queryParams: req.query,
-		})
-
 		const {
 			date,
 			month,
@@ -37,14 +28,8 @@ router.get('/', authenticate, async (req, res) => {
 
 		// Workers can see their own orders or all orders if specifically requested
 		if (req.user.position === 'worker') {
-			// Allow workers to see all orders when 'viewAll' parameter is true
 			if (req.query.viewAll !== 'true') {
-				console.log('📝 [BACKEND DEBUG] Worker viewing own orders only')
 				filter.worker = req.user._id
-			} else {
-				console.log(
-					'🌐 [BACKEND DEBUG] Worker viewing ALL orders (viewAll=true)'
-				)
 			}
 		}
 
@@ -70,8 +55,8 @@ router.get('/', authenticate, async (req, res) => {
 			}
 		} else if (month && year) {
 			// Month/year filtering (new functionality)
-			const selectedMonth = parseInt(month) - 1 // JavaScript months are 0-based
-			const selectedYear = parseInt(year)
+			const selectedMonth = parseInt(month, 10) - 1 // JavaScript months are 0-based
+			const selectedYear = parseInt(year, 10)
 
 			// Set start date to the first day of the selected month
 			const startDate = new Date(selectedYear, selectedMonth, 1)
@@ -90,33 +75,29 @@ router.get('/', authenticate, async (req, res) => {
 			filter.status = status
 		}
 
-		const skip = (parseInt(page) - 1) * parseInt(limit)
+		const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
+		const pageNum = Math.max(parseInt(page, 10) || 1, 1)
+		const skip = (pageNum - 1) * limitNum
 
-		console.log('🔍 [BACKEND DEBUG] Final MongoDB filter:', filter)
-
-		const orders = await Order.find(filter)
+		const listQuery = Order.find(filter)
 			.populate('worker', 'username branch')
 			.populate('items.product', 'name unit category price images')
 			.populate('processedBy', 'username')
 			.sort({ createdAt: -1 })
 			.skip(skip)
-			.limit(parseInt(limit))
+			.limit(limitNum)
+			.lean()
 
-		const total = await Order.countDocuments(filter)
-
-		console.log('✅ [BACKEND DEBUG] Orders query result:', {
-			totalOrdersFound: total,
-			ordersReturned: orders.length,
-			filter: filter,
-			page: parseInt(page),
-			limit: parseInt(limit),
-		})
+		const [orders, total] = await Promise.all([
+			listQuery.exec(),
+			Order.countDocuments(filter),
+		])
 
 		res.json({
 			orders,
 			pagination: {
-				current: parseInt(page),
-				pages: Math.ceil(total / parseInt(limit)),
+				current: pageNum,
+				pages: Math.ceil(total / limitNum),
 				total,
 			},
 		})

@@ -121,5 +121,6 @@ const productSchema = new mongoose.Schema(
 
 // Index for better search performance
 productSchema.index({ name: 'text', category: 1 })
+productSchema.index({ isActive: 1, category: 1 })
 
 module.exports = mongoose.model('Product', productSchema)

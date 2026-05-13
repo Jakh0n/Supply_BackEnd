@@ -1,10 +1,19 @@
 const express = require('express')
 const jwt = require('jsonwebtoken')
+const rateLimit = require('express-rate-limit')
 const { body, validationResult } = require('express-validator')
 const User = require('../models/User')
 const { authenticate } = require('../middleware/auth')
 
 const router = express.Router()
+
+const loginLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000,
+	max: 10,
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { message: 'Too many login attempts. Please try again later.' },
+})
 
 // Generate JWT token
 const generateToken = userId => {
@@ -21,6 +30,7 @@ router.post('/register', (req, res) => {
 // Login user
 router.post(
 	'/login',
+	loginLimiter,
 	[
 		body('username').notEmpty().withMessage('Username is required'),
 		body('password').notEmpty().withMessage('Password is required'),

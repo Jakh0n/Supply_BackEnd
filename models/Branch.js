@@ -29,8 +29,7 @@ const branchSchema = new mongoose.Schema(
 	}
 )
 
-// Index for faster queries
-branchSchema.index({ name: 1 })
+// Index for faster queries (name is already indexed via unique: true)
 branchSchema.index({ isActive: 1 })
 
 module.exports = mongoose.model('Branch', branchSchema)

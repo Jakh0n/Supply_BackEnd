@@ -71,5 +71,7 @@ const drinkOrderSchema = new mongoose.Schema(
 drinkOrderSchema.index({ branch: 1, requestedDate: 1 })
 drinkOrderSchema.index({ worker: 1, createdAt: -1 })
 drinkOrderSchema.index({ status: 1, requestedDate: 1 })
+drinkOrderSchema.index({ createdAt: -1 })
+drinkOrderSchema.index({ branch: 1, status: 1, createdAt: -1 })
 
 module.exports = mongoose.model('DrinkOrder', drinkOrderSchema)

@@ -82,22 +82,29 @@ router.get('/', authenticate, async (req, res) => {
 			filter.status = status
 		}
 
-		const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10)
-		const drinkOrders = await DrinkOrder.find(filter)
+		const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
+		const pageNum = Math.max(parseInt(page, 10) || 1, 1)
+		const skipSafe = (pageNum - 1) * limitNum
+
+		const listQuery = DrinkOrder.find(filter)
 			.populate('worker', 'username branch')
 			.populate('items.product', 'name unit category price images')
 			.populate('processedBy', 'username')
 			.sort({ createdAt: -1 })
-			.skip(skip)
-			.limit(parseInt(limit, 10))
+			.skip(skipSafe)
+			.limit(limitNum)
+			.lean()
 
-		const total = await DrinkOrder.countDocuments(filter)
+		const [drinkOrders, total] = await Promise.all([
+			listQuery.exec(),
+			DrinkOrder.countDocuments(filter),
+		])
 
 		res.json({
 			drinkOrders,
 			pagination: {
-				current: parseInt(page, 10),
-				pages: Math.ceil(total / parseInt(limit, 10)),
+				current: pageNum,
+				pages: Math.ceil(total / limitNum),
 				total,
 			},
 		})

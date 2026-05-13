@@ -138,5 +138,7 @@ productPurchaseSchema.index({ category: 1 })
 productPurchaseSchema.index({ branch: 1 })
 productPurchaseSchema.index({ status: 1 })
 productPurchaseSchema.index({ createdBy: 1 })
+productPurchaseSchema.index({ branch: 1, date: -1 })
+productPurchaseSchema.index({ category: 1, date: -1 })
 
 module.exports = mongoose.model('ProductPurchase', productPurchaseSchema)

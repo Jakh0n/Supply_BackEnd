@@ -62,4 +62,7 @@ userSchema.methods.toJSON = function () {
 	return userObject
 }
 
+userSchema.index({ position: 1, isActive: 1 })
+userSchema.index({ branch: 1, position: 1, isActive: 1 })
+
 module.exports = mongoose.model('User', userSchema)
