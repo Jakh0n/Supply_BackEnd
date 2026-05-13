@@ -1,7 +1,27 @@
 const jwt = require('jsonwebtoken')
+const mongoose = require('mongoose')
 const User = require('../models/User')
 
-// Verify JWT token
+const buildUserFromToken = decoded => {
+	const idStr = decoded.userId
+	if (!idStr || !mongoose.Types.ObjectId.isValid(idStr)) {
+		return null
+	}
+	const _id = new mongoose.Types.ObjectId(idStr)
+	return {
+		_id,
+		get id() {
+			return _id.toString()
+		},
+		username: decoded.username,
+		position: decoded.position,
+		branch: decoded.branch,
+		isActive: decoded.isActive,
+		createdAt: decoded.createdAt ? new Date(decoded.createdAt) : undefined,
+	}
+}
+
+// Verify JWT token (new tokens carry profile; old tokens fall back to one DB lookup)
 const authenticate = async (req, res, next) => {
 	try {
 		const token = req.header('Authorization')?.replace('Bearer ', '')
@@ -13,12 +33,27 @@ const authenticate = async (req, res, next) => {
 		}
 
 		const decoded = jwt.verify(token, process.env.JWT_SECRET)
-		const user = await User.findById(decoded.userId).select('-password')
 
-		if (!user || !user.isActive) {
-			return res
-				.status(401)
-				.json({ message: 'Invalid token or user not found.' })
+		const hasEmbeddedProfile =
+			decoded.username != null &&
+			decoded.position != null &&
+			typeof decoded.isActive === 'boolean'
+
+		let user
+		if (hasEmbeddedProfile) {
+			user = buildUserFromToken(decoded)
+			if (!user || !user.isActive) {
+				return res
+					.status(401)
+					.json({ message: 'Invalid token or user not found.' })
+			}
+		} else {
+			user = await User.findById(decoded.userId).select('-password')
+			if (!user || !user.isActive) {
+				return res
+					.status(401)
+					.json({ message: 'Invalid token or user not found.' })
+			}
 		}
 
 		req.user = user

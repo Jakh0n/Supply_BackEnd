@@ -15,9 +15,22 @@ const loginLimiter = rateLimit({
 	message: { message: 'Too many login attempts. Please try again later.' },
 })
 
-// Generate JWT token
-const generateToken = userId => {
-	return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' })
+// JWT includes profile so authenticate can skip a DB round-trip (legacy tokens: userId only)
+const generateToken = user => {
+	return jwt.sign(
+		{
+			userId: user._id.toString(),
+			username: user.username,
+			position: user.position,
+			branch: user.branch,
+			isActive: user.isActive,
+			...(user.createdAt && {
+				createdAt: user.createdAt.toISOString(),
+			}),
+		},
+		process.env.JWT_SECRET,
+		{ expiresIn: '7d' }
+	)
 }
 
 // Register new user - DISABLED
@@ -59,8 +72,7 @@ router.post(
 				return res.status(401).json({ message: 'Invalid credentials' })
 			}
 
-			// Generate token
-			const token = generateToken(user._id)
+			const token = generateToken(user)
 
 			res.json({
 				message: 'Login successful',

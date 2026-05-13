@@ -34,30 +34,57 @@ router.get('/names', authenticate, async (req, res) => {
 // Get all branches (admin only)
 router.get('/', authenticate, requireAdmin, async (req, res) => {
 	try {
-		// Get all branches from the Branch collection
 		const allBranches = await Branch.find({ isActive: true }).sort({ name: 1 })
+		const names = allBranches.map(b => b.name)
 
-		// Get branch statistics
-		const branchStats = await Promise.all(
-			allBranches.map(async branch => {
-				const [activeWorkers, totalOrders, pendingOrders] = await Promise.all([
-					User.countDocuments({
-						branch: branch.name,
+		if (names.length === 0) {
+			return res.json({ branches: [] })
+		}
+
+		const [workerCounts, orderCounts] = await Promise.all([
+			User.aggregate([
+				{
+					$match: {
+						branch: { $in: names },
 						position: 'worker',
 						isActive: true,
-					}),
-					Order.countDocuments({ branch: branch.name }),
-					Order.countDocuments({ branch: branch.name, status: 'pending' }),
-				])
+					},
+				},
+				{ $group: { _id: '$branch', activeWorkers: { $sum: 1 } } },
+			]),
+			Order.aggregate([
+				{ $match: { branch: { $in: names } } },
+				{
+					$group: {
+						_id: '$branch',
+						totalOrders: { $sum: 1 },
+						pendingOrders: {
+							$sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+						},
+					},
+				},
+			]),
+		])
 
-				return {
-					name: branch.name,
-					activeWorkers,
-					totalOrders,
-					pendingOrders,
-				}
-			})
+		const workersByBranch = new Map(
+			workerCounts.map(d => [d._id, d.activeWorkers])
 		)
+		const ordersByBranch = new Map(
+			orderCounts.map(d => [
+				d._id,
+				{ total: d.totalOrders, pending: d.pendingOrders },
+			])
+		)
+
+		const branchStats = allBranches.map(branch => {
+			const o = ordersByBranch.get(branch.name) || { total: 0, pending: 0 }
+			return {
+				name: branch.name,
+				activeWorkers: workersByBranch.get(branch.name) || 0,
+				totalOrders: o.total,
+				pendingOrders: o.pending,
+			}
+		})
 
 		res.json({
 			branches: branchStats,

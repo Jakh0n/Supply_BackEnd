@@ -167,14 +167,8 @@ router.post(
 	],
 	async (req, res) => {
 		try {
-			console.log('=== ORDER CREATION DEBUG START ===')
-			console.log('User:', req.user)
-			console.log('Request body:', JSON.stringify(req.body, null, 2))
-
 			const errors = validationResult(req)
 			if (!errors.isEmpty()) {
-				console.log('=== VALIDATION ERRORS ===')
-				console.log('Errors:', JSON.stringify(errors.array(), null, 2))
 				return res.status(400).json({
 					message: 'Validation failed',
 					errors: errors.array(),
@@ -183,100 +177,27 @@ router.post(
 
 			const { branch, requestedDate, items, notes } = req.body
 
-			console.log('Extracted data:')
-			console.log('- branch:', branch)
-			console.log('- requestedDate:', requestedDate)
-			console.log('- items:', items)
-			console.log('- notes:', notes)
-			console.log('- user.branch:', req.user.branch)
-
-			// Validate that all products exist and are active
 			const productIds = items.map(item => item.product)
-			console.log('=== PRODUCT VALIDATION DEBUG ===')
-			console.log('Product IDs to validate:', productIds)
-			console.log(
-				'Product IDs types:',
-				productIds.map(id => typeof id)
-			)
-
-			// Check if all products exist (including inactive ones)
 			const allProducts = await Product.find({
 				_id: { $in: productIds },
 			})
 
-			console.log('All products found (active + inactive):', allProducts.length)
-			console.log(
-				'All products details:',
-				allProducts.map(p => ({
-					id: p._id,
-					name: p.name,
-					isActive: p.isActive,
-				}))
-			)
-
-			// Check for active products only
-			const activeProducts = await Product.find({
-				_id: { $in: productIds },
-				isActive: true,
-			})
-
-			console.log('Active products found:', activeProducts.length)
-			console.log(
-				'Active products details:',
-				activeProducts.map(p => ({
-					id: p._id,
-					name: p.name,
-					isActive: p.isActive,
-				}))
-			)
-
-			// Find missing products
-			const foundIds = allProducts.map(p => p._id.toString())
-			const missingIds = productIds.filter(
-				id => !foundIds.includes(id.toString())
-			)
-			if (missingIds.length > 0) {
-				console.log('❌ Missing products:', missingIds)
-			}
-
-			// Find inactive products
+			const foundIds = new Set(allProducts.map(p => p._id.toString()))
+			const missingIds = productIds.filter(id => !foundIds.has(id.toString()))
 			const inactiveProducts = allProducts.filter(p => !p.isActive)
-			if (inactiveProducts.length > 0) {
-				console.log(
-					'❌ Inactive products:',
-					inactiveProducts.map(p => ({
-						id: p._id,
-						name: p.name,
-					}))
-				)
-			}
+			const activeCount = allProducts.filter(p => p.isActive).length
 
-			if (activeProducts.length !== productIds.length) {
-				console.log('❌ Product validation failed')
-				console.log(
-					'Expected:',
-					productIds.length,
-					'Got:',
-					activeProducts.length
-				)
+			if (activeCount !== productIds.length) {
 				return res.status(400).json({
 					message: 'One or more products are invalid or inactive',
 					details: {
 						totalRequested: productIds.length,
-						activeFound: activeProducts.length,
+						activeFound: activeCount,
 						missingProducts: missingIds,
 						inactiveProducts: inactiveProducts.map(p => p.name),
 					},
 				})
 			}
-
-			console.log('✅ Product validation passed')
-
-			// Check if requested date is not in the past
-			// Temporarily disable date validation for debugging
-			console.log('=== DATE VALIDATION DEBUG ===')
-			console.log('- requestedDate string:', requestedDate)
-			console.log('⚠️  DATE VALIDATION TEMPORARILY DISABLED FOR DEBUGGING')
 
 			// TODO: Re-enable date validation once production issue is resolved
 			/*
@@ -292,15 +213,11 @@ router.post(
 			}
 			*/
 
-			console.log('Creating order object...')
-
-			// Generate order number manually (workaround for pre-save hook)
 			let orderNumber
 			try {
 				const date = new Date()
 				const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '')
 
-				// Get start and end of today for counting
 				const startOfDay = new Date(
 					date.getFullYear(),
 					date.getMonth(),
@@ -312,9 +229,6 @@ router.post(
 					date.getDate() + 1
 				)
 
-				console.log('Manually generating order number for date:', dateStr)
-
-				// Count orders created today
 				const count = await Order.countDocuments({
 					createdAt: {
 						$gte: startOfDay,
@@ -322,17 +236,10 @@ router.post(
 					},
 				})
 
-				console.log('Found', count, 'orders today')
-
-				// Generate order number
 				orderNumber = `ORD-${dateStr}-${String(count + 1).padStart(3, '0')}`
 
-				console.log('Generated order number:', orderNumber)
-
-				// Check if this order number already exists (handle race conditions)
 				const existingOrder = await Order.findOne({ orderNumber })
 				if (existingOrder) {
-					console.log('Order number exists, adding random suffix')
 					const randomSuffix = Math.floor(Math.random() * 1000)
 						.toString()
 						.padStart(3, '0')
@@ -340,17 +247,13 @@ router.post(
 						3,
 						'0'
 					)}-${randomSuffix}`
-					console.log('New order number with suffix:', orderNumber)
 				}
 			} catch (error) {
 				console.error('Error in manual orderNumber generation:', error)
-				// Fallback: use timestamp-based order number
 				const timestamp = Date.now().toString().slice(-8)
 				orderNumber = `ORD-${timestamp}`
-				console.log('Using fallback order number:', orderNumber)
 			}
 
-			// Convert requestedDate string to Date object
 			const requestedDateTime = new Date(requestedDate)
 
 			const orderData = {
@@ -362,21 +265,14 @@ router.post(
 				notes,
 			}
 
-			console.log('Order data to save:', JSON.stringify(orderData, null, 2))
-
 			const order = new Order(orderData)
 
-			console.log('Order object created, attempting to save...')
 			await order.save()
 
-			console.log('Order saved successfully, populating...')
 			await order.populate([
 				{ path: 'worker', select: 'username branch' },
 				{ path: 'items.product', select: 'name unit category price' },
 			])
-
-			console.log('Order creation completed successfully')
-			console.log('=== ORDER CREATION DEBUG END ===')
 
 			res.status(201).json({
 				message: 'Order created successfully',

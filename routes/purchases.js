@@ -92,7 +92,7 @@ router.post("/", authenticate, async (req, res) => {
       notes,
       branch,
       images: images || [],
-      createdBy: req.user.id,
+			createdBy: req.user._id,
     });
 
     await productPurchase.save();

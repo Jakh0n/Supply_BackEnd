@@ -68,33 +68,6 @@ const orderSchema = new mongoose.Schema(
 	}
 )
 
-// Generate order number before saving
-orderSchema.pre('save', async function (next) {
-	if (!this.orderNumber) {
-		try {
-			console.log('Generating order number...')
-
-			// Simple timestamp-based order number that doesn't require DB queries
-			const now = new Date()
-			const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
-			const timeStr = now.getTime().toString().slice(-6) // Last 6 digits of timestamp
-
-			this.orderNumber = `ORD-${dateStr}-${timeStr}`
-
-			console.log('Generated order number:', this.orderNumber)
-		} catch (error) {
-			console.error('Error in orderNumber generation:', error)
-			// Ultimate fallback
-			const timestamp = Date.now().toString().slice(-8)
-			this.orderNumber = `ORD-${timestamp}`
-			console.log('Using fallback order number:', this.orderNumber)
-		}
-	}
-
-	console.log('Final order number before save:', this.orderNumber)
-	next()
-})
-
 // Index for better query performance
 orderSchema.index({ branch: 1, requestedDate: 1 })
 orderSchema.index({ worker: 1, createdAt: -1 })
