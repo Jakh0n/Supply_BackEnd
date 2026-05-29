@@ -8,7 +8,6 @@ const {
 	requireWorker,
 	requireAdminOrEditor,
 } = require('../middleware/auth')
-const { generateOrdersPDF } = require('../utils/pdfGenerator')
 
 const router = express.Router()
 
