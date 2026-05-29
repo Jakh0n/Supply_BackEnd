@@ -83,7 +83,8 @@ router.get('/', authenticate, async (req, res) => {
 			filter.status = status
 		}
 
-		const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
+		const maxLimit = ['admin', 'editor'].includes(req.user.position) ? 5000 : 100
+		const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), maxLimit)
 		const pageNum = Math.max(parseInt(page, 10) || 1, 1)
 		const skipSafe = (pageNum - 1) * limitNum
 
@@ -301,6 +302,78 @@ router.put(
 		} catch (error) {
 			console.error('Update drink order error:', error)
 			res.status(500).json({ message: 'Server error updating drink order' })
+		}
+	}
+)
+
+function buildEditorDrinkOrderFilter({ date, branch }) {
+	const filter = {}
+	if (date) {
+		const startDate = new Date(date)
+		const endDate = new Date(date)
+		endDate.setDate(endDate.getDate() + 1)
+		filter.requestedDate = { $gte: startDate, $lt: endDate }
+	}
+	if (branch) {
+		filter.branch = branch
+	}
+	return filter
+}
+
+router.patch(
+	'/bulk/status-all',
+	authenticate,
+	requireAdminOrEditor,
+	[
+		body('status')
+			.isIn(['pending', 'approved', 'rejected', 'completed'])
+			.withMessage('Invalid status'),
+		body('adminNotes')
+			.optional()
+			.isLength({ max: 500 })
+			.withMessage('Admin notes cannot exceed 500 characters'),
+		body('date').optional().isISO8601().withMessage('Invalid date'),
+		body('branch').optional().isString(),
+		body('scope')
+			.optional()
+			.isIn(['all', 'filtered'])
+			.withMessage('Scope must be all or filtered'),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req)
+			if (!errors.isEmpty()) {
+				return res.status(400).json({
+					message: 'Validation failed',
+					errors: errors.array(),
+				})
+			}
+
+			const { status, adminNotes, date, branch, scope = 'all' } = req.body
+			const filter =
+				scope === 'filtered'
+					? buildEditorDrinkOrderFilter({ date, branch })
+					: {}
+
+			const updateResult = await DrinkOrder.updateMany(filter, {
+				$set: {
+					status,
+					processedBy: req.user._id,
+					processedAt: new Date(),
+					...(adminNotes && { adminNotes }),
+				},
+			})
+
+			res.json({
+				message: `Successfully updated ${updateResult.modifiedCount} drink orders to ${status}`,
+				updatedCount: updateResult.modifiedCount,
+				matchedCount: updateResult.matchedCount,
+			})
+		} catch (error) {
+			console.error('Bulk update all drink order statuses error:', error)
+			res
+				.status(500)
+				.json({ message: 'Server error updating drink order statuses' })
 		}
 	}
 )

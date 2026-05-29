@@ -1,7 +1,11 @@
 const express = require('express')
 const { body, validationResult } = require('express-validator')
 const Product = require('../models/Product')
-const { authenticate, requireAdmin } = require('../middleware/auth')
+const {
+	authenticate,
+	requireAdmin,
+	requireAdminOrEditor,
+} = require('../middleware/auth')
 const {
 	cloudinary,
 	upload,
@@ -375,11 +379,11 @@ router.put(
 	}
 )
 
-// Toggle product active status (admin only)
+// Toggle product active status (admin or editor — marks sold out for workers)
 router.patch(
 	'/:id/toggle-status',
 	authenticate,
-	requireAdmin,
+	requireAdminOrEditor,
 	async (req, res) => {
 		try {
 			const product = await Product.findById(req.params.id)
