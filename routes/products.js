@@ -126,12 +126,6 @@ router.post(
 			.exists()
 			.withMessage('Category is required')
 			.custom(value => {
-				console.log(
-					'Category validation - value:',
-					value,
-					'type:',
-					typeof value
-				)
 				const allowedCategories = [
 					'store-supplies',
 					'food-products',
@@ -145,11 +139,6 @@ router.post(
 					'vegetables',
 					'others',
 				]
-				console.log('Allowed categories:', allowedCategories)
-				console.log(
-					'Value in allowed categories:',
-					allowedCategories.includes(value)
-				)
 				if (!allowedCategories.includes(value)) {
 					throw new Error(
 						`Invalid category: ${value}. Allowed: ${allowedCategories.join(
@@ -187,12 +176,6 @@ router.post(
 			.withMessage('Price is required')
 			.custom(value => {
 				const numValue = typeof value === 'string' ? parseFloat(value) : value
-				console.log(
-					'Price validation - original value:',
-					value,
-					'parsed value:',
-					numValue
-				)
 				if (isNaN(numValue)) {
 					throw new Error('Price must be a valid number')
 				}
@@ -225,22 +208,8 @@ router.post(
 	],
 	async (req, res) => {
 		try {
-			// Debug logging
-			console.log('=== PRODUCT CREATION DEBUG ===')
-			console.log('Request body:', JSON.stringify(req.body, null, 2))
-			console.log(
-				'User:',
-				req.user
-					? { _id: req.user._id, username: req.user.username }
-					: 'No user'
-			)
-
 			const errors = validationResult(req)
 			if (!errors.isEmpty()) {
-				console.log(
-					'Validation errors:',
-					JSON.stringify(errors.array(), null, 2)
-				)
 				return res.status(400).json({
 					message: 'Validation failed',
 					errors: errors.array(),
@@ -285,17 +254,6 @@ router.post(
 				purchaseSite: purchaseSite || undefined,
 				contact: contact || undefined,
 				monthlyUsage: monthlyUsage || 0,
-				images: images || [],
-				createdBy: req.user._id,
-			})
-
-			console.log('Creating product with processed data:', {
-				name,
-				category,
-				unit,
-				description: description || undefined,
-				supplier: supplier || undefined,
-				price: typeof price === 'string' ? parseFloat(price) : price,
 				images: images || [],
 				createdBy: req.user._id,
 			})

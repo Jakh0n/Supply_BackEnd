@@ -7,6 +7,7 @@ const {
 	requireWorker,
 	requireAdminOrEditor,
 } = require('../middleware/auth')
+const { getWorkerBranch } = require('../utils/workerBranch')
 
 const router = express.Router()
 
@@ -144,7 +145,6 @@ router.post(
 	authenticate,
 	requireWorker,
 	[
-		body('branch').trim().isLength({ min: 1 }).withMessage('Branch is required'),
 		body('requestedDate')
 			.isISO8601()
 			.withMessage('Valid requested date is required'),
@@ -172,7 +172,15 @@ router.post(
 				})
 			}
 
-			const { branch, requestedDate, items, notes } = req.body
+			const { requestedDate, items, notes } = req.body
+
+			const branch = getWorkerBranch(req.user)
+			if (!branch) {
+				return res.status(400).json({
+					message: 'Could not determine branch for this account.',
+				})
+			}
+
 			const validation = await validateDrinkProducts(items)
 
 			if (!validation.valid) {

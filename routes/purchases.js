@@ -12,9 +12,6 @@ const router = express.Router();
 // Create a new product purchase
 router.post("/", authenticate, async (req, res) => {
   try {
-    console.log("Purchase creation request:", req.body);
-    console.log("User:", req.user);
-
     // Only admin can create purchase requests
     if (req.user.position !== "admin") {
       return res.status(403).json({
@@ -49,17 +46,6 @@ router.post("/", authenticate, async (req, res) => {
       "branch",
     ];
     const missingFields = requiredFields.filter((field) => !req.body[field]);
-    console.log("Missing fields:", missingFields);
-    console.log("Field values:", {
-      category: req.body.category,
-      productName: req.body.productName,
-      price: req.body.price,
-      providerName: req.body.providerName,
-      paymentWay: req.body.paymentWay,
-      quantity: req.body.quantity,
-      unit: req.body.unit,
-      branch: req.body.branch,
-    });
 
     if (missingFields.length > 0) {
       return res.status(400).json({
@@ -72,12 +58,6 @@ router.post("/", authenticate, async (req, res) => {
     const calculatedPrice = parseFloat(price);
     const calculatedQuantity = parseInt(quantity);
     const totalAmount = calculatedPrice * calculatedQuantity;
-
-    console.log("Calculated values:", {
-      price: calculatedPrice,
-      quantity: calculatedQuantity,
-      totalAmount,
-    });
 
     const productPurchase = new ProductPurchase({
       date: date ? new Date(date) : new Date(),
@@ -116,7 +96,6 @@ router.post("/", authenticate, async (req, res) => {
         field: key,
         message: error.errors[key].message,
       }));
-      console.log("Validation errors:", validationErrors);
       return res.status(400).json({
         message: "Validation error",
         errors: validationErrors,
