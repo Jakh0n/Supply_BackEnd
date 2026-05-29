@@ -21,10 +21,13 @@ router.get('/', authenticate, async (req, res) => {
 		const { category, search, active } = req.query
 		const filter = {}
 
-		// Filter by active status - only apply filter if explicitly specified
-		if (active !== undefined && active !== 'all') {
-			filter.isActive = active === 'true'
+		// Filter by active status
+		if (active === 'true') {
+			filter.isActive = true
+		} else if (active === 'false') {
+			filter.isActive = false
 		}
+		// active === 'all' or omitted → return all products
 
 		// Filter by category
 		if (category && category !== 'all') {
