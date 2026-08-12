@@ -9,6 +9,10 @@ const {
   requireAdminOrEditor,
 } = require("../middleware/auth");
 const { getOrderDayContext } = require("../services/orderDayContext");
+const {
+  maybeDeductForCompletion,
+  deductForOrdersBecomingCompleted,
+} = require("../services/stockService");
 const { getWorkerBranch } = require("../utils/workerBranch");
 
 const router = express.Router();
@@ -381,6 +385,14 @@ router.patch(
           ? buildEditorOrderFilter({ date, branch })
           : {};
 
+      if (status === "completed") {
+        const ordersToComplete = await Order.find({
+          ...filter,
+          status: { $ne: "completed" },
+        }).select("items status");
+        await deductForOrdersBecomingCompleted(ordersToComplete);
+      }
+
       const updateResult = await Order.updateMany(filter, {
         $set: {
           status,
@@ -431,6 +443,14 @@ router.patch(
       }
 
       const { status, orderIds, adminNotes } = req.body;
+
+      if (status === "completed") {
+        const ordersToComplete = await Order.find({
+          _id: { $in: orderIds },
+          status: { $ne: "completed" },
+        }).select("items status");
+        await deductForOrdersBecomingCompleted(ordersToComplete);
+      }
 
       // Update all orders with the new status
       const updateResult = await Order.updateMany(
@@ -497,6 +517,7 @@ router.patch(
         return res.status(404).json({ message: "Order not found" });
       }
 
+      const previousStatus = order.status;
       order.status = status;
       if (adminNotes) {
         order.adminNotes = adminNotes;
@@ -504,6 +525,7 @@ router.patch(
       order.processedBy = req.user._id;
       order.processedAt = new Date();
 
+      await maybeDeductForCompletion(order, previousStatus, status);
       await order.save();
       await order.populate([
         { path: "worker", select: "username branch" },

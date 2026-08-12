@@ -12,6 +12,7 @@ const {
 	uploadToCloudinary,
 } = require('../config/cloudinary')
 const { escapeRegex } = require('../utils/escapeRegex')
+const { addStock } = require('../services/stockService')
 
 const router = express.Router()
 
@@ -378,6 +379,46 @@ router.put(
 		} catch (error) {
 			console.error('Update product error:', error)
 			res.status(500).json({ message: 'Server error updating product' })
+		}
+	}
+)
+
+// Add on-hand stock (admin or editor) — increments Product.amount
+router.patch(
+	'/:id/stock',
+	authenticate,
+	requireAdminOrEditor,
+	[
+		body('quantity')
+			.isFloat({ gt: 0 })
+			.withMessage('Quantity must be a positive number'),
+	],
+	async (req, res) => {
+		try {
+			const errors = validationResult(req)
+			if (!errors.isEmpty()) {
+				return res.status(400).json({
+					message: 'Validation failed',
+					errors: errors.array(),
+				})
+			}
+
+			const product = await addStock(req.params.id, req.body.quantity)
+			await product.populate('createdBy', 'username')
+
+			res.json({
+				message: 'Stock updated successfully',
+				product,
+			})
+		} catch (error) {
+			if (error.message === 'Product not found') {
+				return res.status(404).json({ message: 'Product not found' })
+			}
+			if (error.message === 'Quantity must be a positive number') {
+				return res.status(400).json({ message: error.message })
+			}
+			console.error('Add product stock error:', error)
+			res.status(500).json({ message: 'Server error updating product stock' })
 		}
 	}
 )
