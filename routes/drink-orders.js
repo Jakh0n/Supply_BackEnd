@@ -8,10 +8,6 @@ const {
 	requireAdminOrEditor,
 } = require('../middleware/auth')
 const { getWorkerBranch } = require('../utils/workerBranch')
-const {
-	maybeDeductForCompletion,
-	deductForOrdersBecomingCompleted,
-} = require('../services/stockService')
 
 const router = express.Router()
 
@@ -359,14 +355,6 @@ router.patch(
 					? buildEditorDrinkOrderFilter({ date, branch })
 					: {}
 
-			if (status === 'completed') {
-				const ordersToComplete = await DrinkOrder.find({
-					...filter,
-					status: { $ne: 'completed' },
-				}).select('items status')
-				await deductForOrdersBecomingCompleted(ordersToComplete)
-			}
-
 			const updateResult = await DrinkOrder.updateMany(filter, {
 				$set: {
 					status,
@@ -418,16 +406,13 @@ router.patch(
 				return res.status(404).json({ message: 'Drink order not found' })
 			}
 
-			const previousStatus = drinkOrder.status
-			const nextStatus = req.body.status
-			drinkOrder.status = nextStatus
+			drinkOrder.status = req.body.status
 			if (req.body.adminNotes) {
 				drinkOrder.adminNotes = req.body.adminNotes
 			}
 			drinkOrder.processedBy = req.user._id
 			drinkOrder.processedAt = new Date()
 
-			await maybeDeductForCompletion(drinkOrder, previousStatus, nextStatus)
 			await drinkOrder.save()
 			await drinkOrder.populate([
 				{ path: 'worker', select: 'username branch' },
