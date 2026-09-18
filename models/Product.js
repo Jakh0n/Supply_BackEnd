@@ -68,6 +68,24 @@ const productSchema = new mongoose.Schema(
 			default: 0,
 			min: [0, 'Amount cannot be negative'],
 		},
+		minimumStock: {
+			type: Number,
+			default: 0,
+			min: [0, 'Minimum stock cannot be negative'],
+		},
+		inventoryInitialized: {
+			type: Boolean,
+			default: false,
+		},
+		inventoryInitializedAt: {
+			type: Date,
+			default: null,
+		},
+		inventoryInitializedBy: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'User',
+			default: null,
+		},
 		count: {
 			type: Number,
 			default: 0,

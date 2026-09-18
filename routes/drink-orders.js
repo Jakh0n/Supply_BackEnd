@@ -1,465 +1,486 @@
-const express = require('express')
-const { body, validationResult } = require('express-validator')
-const DrinkOrder = require('../models/DrinkOrder')
-const Product = require('../models/Product')
+const express = require("express");
+const { body, validationResult } = require("express-validator");
+const DrinkOrder = require("../models/DrinkOrder");
+const Product = require("../models/Product");
 const {
-	authenticate,
-	requireWorker,
-	requireAdminOrEditor,
-} = require('../middleware/auth')
-const { getWorkerBranch } = require('../utils/workerBranch')
+  authenticate,
+  requireWorker,
+  requireAdminOrEditor,
+} = require("../middleware/auth");
+const {
+  InventoryError,
+  transitionManyOrderStatuses,
+  transitionOrderStatus,
+} = require("../services/stockService");
+const { getWorkerBranch } = require("../utils/workerBranch");
 
-const router = express.Router()
+const router = express.Router();
 
-const DRINK_CATEGORIES = new Set(['drinks', 'beverages'])
+const sendDrinkOrderStatusError = (res, error, fallbackMessage) => {
+  if (error instanceof InventoryError) {
+    return res.status(error.statusCode).json({
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    });
+  }
+  console.error(fallbackMessage, error);
+  return res.status(500).json({ message: fallbackMessage });
+};
+
+const DRINK_CATEGORIES = new Set(["drinks", "beverages"]);
 
 const validateDrinkProducts = async (items) => {
-	const productIds = items.map(item => item.product)
-	const products = await Product.find({
-		_id: { $in: productIds },
-		isActive: true,
-	})
+  const productIds = items.map((item) => item.product);
+  const products = await Product.find({
+    _id: { $in: productIds },
+    isActive: true,
+  });
 
-	if (products.length !== productIds.length) {
-		return {
-			valid: false,
-			message: 'One or more products are invalid or inactive',
-		}
-	}
+  if (products.length !== productIds.length) {
+    return {
+      valid: false,
+      message: "One or more products are invalid or inactive",
+    };
+  }
 
-	const nonDrinkProducts = products.filter(
-		product => !DRINK_CATEGORIES.has(product.category)
-	)
+  const nonDrinkProducts = products.filter(
+    (product) => !DRINK_CATEGORIES.has(product.category),
+  );
 
-	if (nonDrinkProducts.length > 0) {
-		return {
-			valid: false,
-			message: 'Only drink products are allowed in drink orders',
-			invalidProducts: nonDrinkProducts.map(product => product.name),
-		}
-	}
+  if (nonDrinkProducts.length > 0) {
+    return {
+      valid: false,
+      message: "Only drink products are allowed in drink orders",
+      invalidProducts: nonDrinkProducts.map((product) => product.name),
+    };
+  }
 
-	return { valid: true }
-}
+  return { valid: true };
+};
 
 const generateDrinkOrderNumber = async () => {
-	const now = new Date()
-	const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
-	const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-	const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  );
 
-	const count = await DrinkOrder.countDocuments({
-		createdAt: { $gte: startOfDay, $lt: endOfDay },
-	})
+  const count = await DrinkOrder.countDocuments({
+    createdAt: { $gte: startOfDay, $lt: endOfDay },
+  });
 
-	return `DRK-${dateStr}-${String(count + 1).padStart(3, '0')}`
-}
+  return `DRK-${dateStr}-${String(count + 1).padStart(3, "0")}`;
+};
 
-router.get('/', authenticate, async (req, res) => {
-	try {
-		const { date, branch, status, page = 1, limit = 10 } = req.query
-		const filter = {}
+router.get("/", authenticate, async (req, res) => {
+  try {
+    const { date, branch, status, page = 1, limit = 10 } = req.query;
+    const filter = {};
 
-		if (req.user.position === 'worker' && req.query.viewAll !== 'true') {
-			filter.worker = req.user._id
-		}
+    if (req.user.position === "worker" && req.query.viewAll !== "true") {
+      filter.worker = req.user._id;
+    }
 
-		if (
-			branch &&
-			(['admin', 'editor'].includes(req.user.position) ||
-				(req.user.position === 'worker' && req.query.viewAll === 'true'))
-		) {
-			filter.branch = branch
-		}
+    if (
+      branch &&
+      (["admin", "editor"].includes(req.user.position) ||
+        (req.user.position === "worker" && req.query.viewAll === "true"))
+    ) {
+      filter.branch = branch;
+    }
 
-		if (date) {
-			const startDate = new Date(date)
-			const endDate = new Date(date)
-			endDate.setDate(endDate.getDate() + 1)
-			filter.requestedDate = { $gte: startDate, $lt: endDate }
-		}
+    if (date) {
+      const startDate = new Date(date);
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + 1);
+      filter.requestedDate = { $gte: startDate, $lt: endDate };
+    }
 
-		if (status && status !== 'all') {
-			filter.status = status
-		}
+    if (status && status !== "all") {
+      filter.status = status;
+    }
 
-		const maxLimit = ['admin', 'editor'].includes(req.user.position) ? 5000 : 100
-		const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), maxLimit)
-		const pageNum = Math.max(parseInt(page, 10) || 1, 1)
-		const skipSafe = (pageNum - 1) * limitNum
+    const maxLimit = ["admin", "editor"].includes(req.user.position)
+      ? 5000
+      : 100;
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), maxLimit);
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const skipSafe = (pageNum - 1) * limitNum;
 
-		const listQuery = DrinkOrder.find(filter)
-			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category price images')
-			.populate('processedBy', 'username')
-			.sort({ createdAt: -1 })
-			.skip(skipSafe)
-			.limit(limitNum)
-			.lean()
+    const listQuery = DrinkOrder.find(filter)
+      .populate("worker", "username branch")
+      .populate("items.product", "name unit category price images")
+      .populate("processedBy", "username")
+      .sort({ createdAt: -1 })
+      .skip(skipSafe)
+      .limit(limitNum)
+      .lean();
 
-		const [drinkOrders, total] = await Promise.all([
-			listQuery.exec(),
-			DrinkOrder.countDocuments(filter),
-		])
+    const [drinkOrders, total] = await Promise.all([
+      listQuery.exec(),
+      DrinkOrder.countDocuments(filter),
+    ]);
 
-		res.json({
-			drinkOrders,
-			pagination: {
-				current: pageNum,
-				pages: Math.ceil(total / limitNum),
-				total,
-			},
-		})
-	} catch (error) {
-		console.error('Get drink orders error:', error)
-		res.status(500).json({ message: 'Server error fetching drink orders' })
-	}
-})
+    res.json({
+      drinkOrders,
+      pagination: {
+        current: pageNum,
+        pages: Math.ceil(total / limitNum),
+        total,
+      },
+    });
+  } catch (error) {
+    console.error("Get drink orders error:", error);
+    res.status(500).json({ message: "Server error fetching drink orders" });
+  }
+});
 
-router.get('/:id', authenticate, async (req, res) => {
-	try {
-		const drinkOrder = await DrinkOrder.findById(req.params.id)
-			.populate('worker', 'username branch')
-			.populate('items.product', 'name unit category supplier price images')
-			.populate('processedBy', 'username')
+router.get("/:id", authenticate, async (req, res) => {
+  try {
+    const drinkOrder = await DrinkOrder.findById(req.params.id)
+      .populate("worker", "username branch")
+      .populate("items.product", "name unit category supplier price images")
+      .populate("processedBy", "username");
 
-		if (!drinkOrder) {
-			return res.status(404).json({ message: 'Drink order not found' })
-		}
+    if (!drinkOrder) {
+      return res.status(404).json({ message: "Drink order not found" });
+    }
 
-		if (
-			req.user.position === 'worker' &&
-			drinkOrder.worker._id.toString() !== req.user._id.toString()
-		) {
-			return res.status(403).json({ message: 'Access denied' })
-		}
+    if (
+      req.user.position === "worker" &&
+      drinkOrder.worker._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
 
-		res.json({ drinkOrder })
-	} catch (error) {
-		console.error('Get drink order error:', error)
-		res.status(500).json({ message: 'Server error fetching drink order' })
-	}
-})
+    res.json({ drinkOrder });
+  } catch (error) {
+    console.error("Get drink order error:", error);
+    res.status(500).json({ message: "Server error fetching drink order" });
+  }
+});
 
 router.post(
-	'/',
-	authenticate,
-	requireWorker,
-	[
-		body('requestedDate')
-			.isISO8601()
-			.withMessage('Valid requested date is required'),
-		body('items')
-			.isArray({ min: 1 })
-			.withMessage('At least one drink item is required'),
-		body('items.*.product')
-			.isMongoId()
-			.withMessage('Valid product ID is required'),
-		body('items.*.quantity')
-			.isInt({ min: 1 })
-			.withMessage('Quantity must be at least 1'),
-		body('notes')
-			.optional()
-			.isLength({ max: 500 })
-			.withMessage('Order notes cannot exceed 500 characters'),
-	],
-	async (req, res) => {
-		try {
-			const errors = validationResult(req)
-			if (!errors.isEmpty()) {
-				return res.status(400).json({
-					message: 'Validation failed',
-					errors: errors.array(),
-				})
-			}
+  "/",
+  authenticate,
+  requireWorker,
+  [
+    body("requestedDate")
+      .isISO8601()
+      .withMessage("Valid requested date is required"),
+    body("items")
+      .isArray({ min: 1 })
+      .withMessage("At least one drink item is required"),
+    body("items.*.product")
+      .isMongoId()
+      .withMessage("Valid product ID is required"),
+    body("items.*.quantity")
+      .isInt({ min: 1 })
+      .withMessage("Quantity must be at least 1"),
+    body("notes")
+      .optional()
+      .isLength({ max: 500 })
+      .withMessage("Order notes cannot exceed 500 characters"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
 
-			const { requestedDate, items, notes } = req.body
+      const { requestedDate, items, notes } = req.body;
 
-			const branch = getWorkerBranch(req.user)
-			if (!branch) {
-				return res.status(400).json({
-					message: 'Could not determine branch for this account.',
-				})
-			}
+      const branch = getWorkerBranch(req.user);
+      if (!branch) {
+        return res.status(400).json({
+          message: "Could not determine branch for this account.",
+        });
+      }
 
-			const validation = await validateDrinkProducts(items)
+      const validation = await validateDrinkProducts(items);
 
-			if (!validation.valid) {
-				return res.status(400).json(validation)
-			}
+      if (!validation.valid) {
+        return res.status(400).json(validation);
+      }
 
-			const orderNumber = await generateDrinkOrderNumber()
-			const drinkOrder = new DrinkOrder({
-				orderNumber,
-				worker: req.user._id,
-				branch,
-				requestedDate: new Date(requestedDate),
-				items,
-				notes,
-			})
+      const orderNumber = await generateDrinkOrderNumber();
+      const drinkOrder = new DrinkOrder({
+        orderNumber,
+        worker: req.user._id,
+        branch,
+        requestedDate: new Date(requestedDate),
+        items,
+        notes,
+      });
 
-			await drinkOrder.save()
-			await drinkOrder.populate([
-				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category price' },
-			])
+      await drinkOrder.save();
+      await drinkOrder.populate([
+        { path: "worker", select: "username branch" },
+        { path: "items.product", select: "name unit category price" },
+      ]);
 
-			res.status(201).json({
-				message: 'Drink order created successfully',
-				drinkOrder,
-			})
-		} catch (error) {
-			console.error('Create drink order error:', error)
-			res.status(500).json({ message: 'Server error creating drink order' })
-		}
-	}
-)
+      res.status(201).json({
+        message: "Drink order created successfully",
+        drinkOrder,
+      });
+    } catch (error) {
+      console.error("Create drink order error:", error);
+      res.status(500).json({ message: "Server error creating drink order" });
+    }
+  },
+);
 
 router.put(
-	'/:id',
-	authenticate,
-	[
-		body('requestedDate')
-			.optional()
-			.isISO8601()
-			.withMessage('Valid requested date is required'),
-		body('items')
-			.optional()
-			.isArray({ min: 1 })
-			.withMessage('At least one drink item is required'),
-		body('items.*.product')
-			.optional()
-			.isMongoId()
-			.withMessage('Valid product ID is required'),
-		body('items.*.quantity')
-			.optional()
-			.isInt({ min: 1 })
-			.withMessage('Quantity must be at least 1'),
-		body('notes')
-			.optional()
-			.isLength({ max: 500 })
-			.withMessage('Order notes cannot exceed 500 characters'),
-	],
-	async (req, res) => {
-		try {
-			const errors = validationResult(req)
-			if (!errors.isEmpty()) {
-				return res.status(400).json({
-					message: 'Validation failed',
-					errors: errors.array(),
-				})
-			}
+  "/:id",
+  authenticate,
+  [
+    body("requestedDate")
+      .optional()
+      .isISO8601()
+      .withMessage("Valid requested date is required"),
+    body("items")
+      .optional()
+      .isArray({ min: 1 })
+      .withMessage("At least one drink item is required"),
+    body("items.*.product")
+      .optional()
+      .isMongoId()
+      .withMessage("Valid product ID is required"),
+    body("items.*.quantity")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("Quantity must be at least 1"),
+    body("notes")
+      .optional()
+      .isLength({ max: 500 })
+      .withMessage("Order notes cannot exceed 500 characters"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
 
-			const drinkOrder = await DrinkOrder.findById(req.params.id)
-			if (!drinkOrder) {
-				return res.status(404).json({ message: 'Drink order not found' })
-			}
+      const drinkOrder = await DrinkOrder.findById(req.params.id);
+      if (!drinkOrder) {
+        return res.status(404).json({ message: "Drink order not found" });
+      }
 
-			if (
-				req.user.position === 'worker' &&
-				drinkOrder.worker.toString() !== req.user._id.toString()
-			) {
-				return res.status(403).json({ message: 'Access denied' })
-			}
+      if (
+        req.user.position === "worker" &&
+        drinkOrder.worker.toString() !== req.user._id.toString()
+      ) {
+        return res.status(403).json({ message: "Access denied" });
+      }
 
-			if (drinkOrder.status !== 'pending') {
-				return res
-					.status(400)
-					.json({ message: 'Only pending drink orders can be edited' })
-			}
+      if (drinkOrder.status !== "pending") {
+        return res
+          .status(400)
+          .json({ message: "Only pending drink orders can be edited" });
+      }
 
-			const updateData = {}
+      const updateData = {};
 
-			if (req.body.requestedDate) {
-				updateData.requestedDate = new Date(req.body.requestedDate)
-			}
+      if (req.body.requestedDate) {
+        updateData.requestedDate = new Date(req.body.requestedDate);
+      }
 
-			if (req.body.items) {
-				const validation = await validateDrinkProducts(req.body.items)
-				if (!validation.valid) {
-					return res.status(400).json(validation)
-				}
-				updateData.items = req.body.items
-			}
+      if (req.body.items) {
+        const validation = await validateDrinkProducts(req.body.items);
+        if (!validation.valid) {
+          return res.status(400).json(validation);
+        }
+        updateData.items = req.body.items;
+      }
 
-			if (req.body.notes !== undefined) {
-				updateData.notes = req.body.notes
-			}
+      if (req.body.notes !== undefined) {
+        updateData.notes = req.body.notes;
+      }
 
-			const updatedDrinkOrder = await DrinkOrder.findByIdAndUpdate(
-				req.params.id,
-				updateData,
-				{ new: true, runValidators: true }
-			).populate([
-				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category price' },
-			])
+      const updatedDrinkOrder = await DrinkOrder.findByIdAndUpdate(
+        req.params.id,
+        updateData,
+        { new: true, runValidators: true },
+      ).populate([
+        { path: "worker", select: "username branch" },
+        { path: "items.product", select: "name unit category price" },
+      ]);
 
-			res.json({
-				message: 'Drink order updated successfully',
-				drinkOrder: updatedDrinkOrder,
-			})
-		} catch (error) {
-			console.error('Update drink order error:', error)
-			res.status(500).json({ message: 'Server error updating drink order' })
-		}
-	}
-)
+      res.json({
+        message: "Drink order updated successfully",
+        drinkOrder: updatedDrinkOrder,
+      });
+    } catch (error) {
+      console.error("Update drink order error:", error);
+      res.status(500).json({ message: "Server error updating drink order" });
+    }
+  },
+);
 
 function buildEditorDrinkOrderFilter({ date, branch }) {
-	const filter = {}
-	if (date) {
-		const startDate = new Date(date)
-		const endDate = new Date(date)
-		endDate.setDate(endDate.getDate() + 1)
-		filter.requestedDate = { $gte: startDate, $lt: endDate }
-	}
-	if (branch) {
-		filter.branch = branch
-	}
-	return filter
+  const filter = {};
+  if (date) {
+    const startDate = new Date(date);
+    const endDate = new Date(date);
+    endDate.setDate(endDate.getDate() + 1);
+    filter.requestedDate = { $gte: startDate, $lt: endDate };
+  }
+  if (branch) {
+    filter.branch = branch;
+  }
+  return filter;
 }
 
 router.patch(
-	'/bulk/status-all',
-	authenticate,
-	requireAdminOrEditor,
-	[
-		body('status')
-			.isIn(['pending', 'approved', 'rejected', 'completed'])
-			.withMessage('Invalid status'),
-		body('adminNotes')
-			.optional()
-			.isLength({ max: 500 })
-			.withMessage('Admin notes cannot exceed 500 characters'),
-		body('date').optional().isISO8601().withMessage('Invalid date'),
-		body('branch').optional().isString(),
-		body('scope')
-			.optional()
-			.isIn(['all', 'filtered'])
-			.withMessage('Scope must be all or filtered'),
-	],
-	async (req, res) => {
-		try {
-			const errors = validationResult(req)
-			if (!errors.isEmpty()) {
-				return res.status(400).json({
-					message: 'Validation failed',
-					errors: errors.array(),
-				})
-			}
+  "/bulk/status-all",
+  authenticate,
+  requireAdminOrEditor,
+  [
+    body("status")
+      .isIn(["pending", "approved", "rejected", "completed"])
+      .withMessage("Invalid status"),
+    body("adminNotes")
+      .optional()
+      .isLength({ max: 500 })
+      .withMessage("Admin notes cannot exceed 500 characters"),
+    body("date").optional().isISO8601().withMessage("Invalid date"),
+    body("branch").optional().isString(),
+    body("scope")
+      .optional()
+      .isIn(["all", "filtered"])
+      .withMessage("Scope must be all or filtered"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
 
-			const { status, adminNotes, date, branch, scope = 'all' } = req.body
-			const filter =
-				scope === 'filtered'
-					? buildEditorDrinkOrderFilter({ date, branch })
-					: {}
+      const { status, adminNotes, date, branch, scope = "all" } = req.body;
+      const filter =
+        scope === "filtered"
+          ? buildEditorDrinkOrderFilter({ date, branch })
+          : {};
 
-			const updateResult = await DrinkOrder.updateMany(filter, {
-				$set: {
-					status,
-					processedBy: req.user._id,
-					processedAt: new Date(),
-					...(adminNotes && { adminNotes }),
-				},
-			})
+      const updateResult = await transitionManyOrderStatuses({
+        Model: DrinkOrder,
+        sourceType: "DrinkOrder",
+        filter,
+        nextStatus: status,
+        userId: req.user._id,
+        adminNotes,
+      });
 
-			res.json({
-				message: `Successfully updated ${updateResult.modifiedCount} drink orders to ${status}`,
-				updatedCount: updateResult.modifiedCount,
-				matchedCount: updateResult.matchedCount,
-			})
-		} catch (error) {
-			console.error('Bulk update all drink order statuses error:', error)
-			res
-				.status(500)
-				.json({ message: 'Server error updating drink order statuses' })
-		}
-	}
-)
+      res.json({
+        message: `Successfully updated ${updateResult.updatedCount} drink orders to ${status}`,
+        updatedCount: updateResult.updatedCount,
+        matchedCount: updateResult.matchedCount,
+      });
+    } catch (error) {
+      return sendDrinkOrderStatusError(
+        res,
+        error,
+        "Server error updating drink order statuses",
+      );
+    }
+  },
+);
 
 router.patch(
-	'/:id/status',
-	authenticate,
-	requireAdminOrEditor,
-	[
-		body('status')
-			.isIn(['pending', 'approved', 'rejected', 'completed'])
-			.withMessage('Invalid status'),
-		body('adminNotes')
-			.optional()
-			.isLength({ max: 500 })
-			.withMessage('Admin notes cannot exceed 500 characters'),
-	],
-	async (req, res) => {
-		try {
-			const errors = validationResult(req)
-			if (!errors.isEmpty()) {
-				return res.status(400).json({
-					message: 'Validation failed',
-					errors: errors.array(),
-				})
-			}
+  "/:id/status",
+  authenticate,
+  requireAdminOrEditor,
+  [
+    body("status")
+      .isIn(["pending", "approved", "rejected", "completed"])
+      .withMessage("Invalid status"),
+    body("adminNotes")
+      .optional()
+      .isLength({ max: 500 })
+      .withMessage("Admin notes cannot exceed 500 characters"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
 
-			const drinkOrder = await DrinkOrder.findById(req.params.id)
-			if (!drinkOrder) {
-				return res.status(404).json({ message: 'Drink order not found' })
-			}
+      await transitionOrderStatus({
+        Model: DrinkOrder,
+        sourceType: "DrinkOrder",
+        orderId: req.params.id,
+        nextStatus: req.body.status,
+        userId: req.user._id,
+        adminNotes: req.body.adminNotes,
+      });
+      const drinkOrder = await DrinkOrder.findById(req.params.id);
+      await drinkOrder.populate([
+        { path: "worker", select: "username branch" },
+        { path: "items.product", select: "name unit category price" },
+        { path: "processedBy", select: "username" },
+      ]);
 
-			drinkOrder.status = req.body.status
-			if (req.body.adminNotes) {
-				drinkOrder.adminNotes = req.body.adminNotes
-			}
-			drinkOrder.processedBy = req.user._id
-			drinkOrder.processedAt = new Date()
+      res.json({
+        message: "Drink order status updated successfully",
+        drinkOrder,
+      });
+    } catch (error) {
+      return sendDrinkOrderStatusError(
+        res,
+        error,
+        "Server error updating drink order status",
+      );
+    }
+  },
+);
 
-			await drinkOrder.save()
-			await drinkOrder.populate([
-				{ path: 'worker', select: 'username branch' },
-				{ path: 'items.product', select: 'name unit category price' },
-				{ path: 'processedBy', select: 'username' },
-			])
+router.delete("/:id", authenticate, async (req, res) => {
+  try {
+    const drinkOrder = await DrinkOrder.findById(req.params.id);
+    if (!drinkOrder) {
+      return res.status(404).json({ message: "Drink order not found" });
+    }
 
-			res.json({
-				message: 'Drink order status updated successfully',
-				drinkOrder,
-			})
-		} catch (error) {
-			console.error('Update drink order status error:', error)
-			res
-				.status(500)
-				.json({ message: 'Server error updating drink order status' })
-		}
-	}
-)
+    if (
+      req.user.position === "worker" &&
+      drinkOrder.worker.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
 
-router.delete('/:id', authenticate, async (req, res) => {
-	try {
-		const drinkOrder = await DrinkOrder.findById(req.params.id)
-		if (!drinkOrder) {
-			return res.status(404).json({ message: 'Drink order not found' })
-		}
+    if (drinkOrder.status !== "pending") {
+      return res
+        .status(400)
+        .json({ message: "Only pending drink orders can be deleted" });
+    }
 
-		if (
-			req.user.position === 'worker' &&
-			drinkOrder.worker.toString() !== req.user._id.toString()
-		) {
-			return res.status(403).json({ message: 'Access denied' })
-		}
+    await DrinkOrder.findByIdAndDelete(req.params.id);
 
-		if (drinkOrder.status !== 'pending') {
-			return res
-				.status(400)
-				.json({ message: 'Only pending drink orders can be deleted' })
-		}
+    res.json({ message: "Drink order deleted successfully" });
+  } catch (error) {
+    console.error("Delete drink order error:", error);
+    res.status(500).json({ message: "Server error deleting drink order" });
+  }
+});
 
-		await DrinkOrder.findByIdAndDelete(req.params.id)
-
-		res.json({ message: 'Drink order deleted successfully' })
-	} catch (error) {
-		console.error('Delete drink order error:', error)
-		res.status(500).json({ message: 'Server error deleting drink order' })
-	}
-})
-
-module.exports = router
+module.exports = router;

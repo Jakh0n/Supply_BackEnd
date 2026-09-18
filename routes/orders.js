@@ -9,9 +9,26 @@ const {
   requireAdminOrEditor,
 } = require("../middleware/auth");
 const { getOrderDayContext } = require("../services/orderDayContext");
+const {
+  InventoryError,
+  transitionManyOrderStatuses,
+  transitionOrderStatus,
+} = require("../services/stockService");
 const { getWorkerBranch } = require("../utils/workerBranch");
 
 const router = express.Router();
+
+const sendOrderStatusError = (res, error, fallbackMessage) => {
+  if (error instanceof InventoryError) {
+    return res.status(error.statusCode).json({
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    });
+  }
+  console.error(fallbackMessage, error);
+  return res.status(500).json({ message: fallbackMessage });
+};
 
 // Get orders based on user role
 router.get("/", authenticate, async (req, res) => {
@@ -381,23 +398,26 @@ router.patch(
           ? buildEditorOrderFilter({ date, branch })
           : {};
 
-      const updateResult = await Order.updateMany(filter, {
-        $set: {
-          status,
-          processedBy: req.user._id,
-          processedAt: new Date(),
-          ...(adminNotes && { adminNotes }),
-        },
+      const updateResult = await transitionManyOrderStatuses({
+        Model: Order,
+        sourceType: "Order",
+        filter,
+        nextStatus: status,
+        userId: req.user._id,
+        adminNotes,
       });
 
       res.json({
-        message: `Successfully updated ${updateResult.modifiedCount} orders to ${status}`,
-        updatedCount: updateResult.modifiedCount,
+        message: `Successfully updated ${updateResult.updatedCount} orders to ${status}`,
+        updatedCount: updateResult.updatedCount,
         matchedCount: updateResult.matchedCount,
       });
     } catch (error) {
-      console.error("Bulk update all order statuses error:", error);
-      res.status(500).json({ message: "Server error updating order statuses" });
+      return sendOrderStatusError(
+        res,
+        error,
+        "Server error updating order statuses",
+      );
     }
   },
 );
@@ -432,18 +452,14 @@ router.patch(
 
       const { status, orderIds, adminNotes } = req.body;
 
-      // Update all orders with the new status
-      const updateResult = await Order.updateMany(
-        { _id: { $in: orderIds } },
-        {
-          $set: {
-            status,
-            processedBy: req.user._id,
-            processedAt: new Date(),
-            ...(adminNotes && { adminNotes }),
-          },
-        },
-      );
+      const updateResult = await transitionManyOrderStatuses({
+        Model: Order,
+        sourceType: "Order",
+        filter: { _id: { $in: orderIds } },
+        nextStatus: status,
+        userId: req.user._id,
+        adminNotes,
+      });
 
       // Get updated orders for response
       const updatedOrders = await Order.find({
@@ -455,13 +471,16 @@ router.patch(
       ]);
 
       res.json({
-        message: `Successfully updated ${updateResult.modifiedCount} orders to ${status}`,
-        updatedCount: updateResult.modifiedCount,
+        message: `Successfully updated ${updateResult.updatedCount} orders to ${status}`,
+        updatedCount: updateResult.updatedCount,
         orders: updatedOrders,
       });
     } catch (error) {
-      console.error("Bulk update order status error:", error);
-      res.status(500).json({ message: "Server error updating order statuses" });
+      return sendOrderStatusError(
+        res,
+        error,
+        "Server error updating order statuses",
+      );
     }
   },
 );
@@ -492,19 +511,15 @@ router.patch(
 
       const { status, adminNotes } = req.body;
 
+      await transitionOrderStatus({
+        Model: Order,
+        sourceType: "Order",
+        orderId: req.params.id,
+        nextStatus: status,
+        userId: req.user._id,
+        adminNotes,
+      });
       const order = await Order.findById(req.params.id);
-      if (!order) {
-        return res.status(404).json({ message: "Order not found" });
-      }
-
-      order.status = status;
-      if (adminNotes) {
-        order.adminNotes = adminNotes;
-      }
-      order.processedBy = req.user._id;
-      order.processedAt = new Date();
-
-      await order.save();
       await order.populate([
         { path: "worker", select: "username branch" },
         { path: "items.product", select: "name unit category price" },
@@ -516,8 +531,11 @@ router.patch(
         order,
       });
     } catch (error) {
-      console.error("Update order status error:", error);
-      res.status(500).json({ message: "Server error updating order status" });
+      return sendOrderStatusError(
+        res,
+        error,
+        "Server error updating order status",
+      );
     }
   },
 );

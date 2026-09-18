@@ -62,6 +62,15 @@ const orderSchema = new mongoose.Schema(
 		processedAt: {
 			type: Date,
 		},
+		inventoryApplied: {
+			type: Boolean,
+			default: false,
+		},
+		inventoryVersion: {
+			type: Number,
+			default: 0,
+			min: 0,
+		},
 	},
 	{
 		timestamps: true,

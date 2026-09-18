@@ -11,13 +11,17 @@ const productPurchaseSchema = new mongoose.Schema(
 			type: String,
 			required: [true, 'Product category is required'],
 			enum: [
+				'store-supplies',
+				'food-products',
 				'frozen-products',
 				'main-products',
 				'desserts',
 				'drinks',
+				'beverages',
 				'packaging-materials',
 				'cleaning-materials',
 				'vegetables',
+				'others',
 			],
 		},
 		productName: {
@@ -25,6 +29,11 @@ const productPurchaseSchema = new mongoose.Schema(
 			required: [true, 'Product name is required'],
 			trim: true,
 			maxlength: [200, 'Product name cannot exceed 200 characters'],
+		},
+		product: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'Product',
+			default: null,
 		},
 		price: {
 			type: Number,
@@ -113,6 +122,15 @@ const productPurchaseSchema = new mongoose.Schema(
 			enum: ['pending', 'ordered', 'received', 'cancelled'],
 			default: 'pending',
 		},
+		inventoryApplied: {
+			type: Boolean,
+			default: false,
+		},
+		inventoryVersion: {
+			type: Number,
+			default: 0,
+			min: 0,
+		},
 		createdBy: {
 			type: mongoose.Schema.Types.ObjectId,
 			ref: 'User',
@@ -137,6 +155,7 @@ productPurchaseSchema.index({ date: -1 })
 productPurchaseSchema.index({ category: 1 })
 productPurchaseSchema.index({ branch: 1 })
 productPurchaseSchema.index({ status: 1 })
+productPurchaseSchema.index({ product: 1, date: -1 })
 productPurchaseSchema.index({ createdBy: 1 })
 productPurchaseSchema.index({ branch: 1, date: -1 })
 productPurchaseSchema.index({ category: 1, date: -1 })

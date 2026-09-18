@@ -1,6 +1,17 @@
 const express = require("express");
+const { body, validationResult } = require("express-validator");
 const ProductPurchase = require("../models/ProductPurchase");
-const { authenticate } = require("../middleware/auth");
+const Product = require("../models/Product");
+const {
+  authenticate,
+  requireAdmin,
+  requireAdminOrEditor,
+} = require("../middleware/auth");
+const {
+  InventoryError,
+  applyPurchaseTransition,
+  runInTransaction,
+} = require("../services/stockService");
 const { escapeRegex } = require("../utils/escapeRegex");
 const {
   cloudinary,
@@ -9,101 +20,136 @@ const {
 } = require("../config/cloudinary");
 const router = express.Router();
 
-// Create a new product purchase
-router.post("/", authenticate, async (req, res) => {
-  try {
-    // Only admin can create purchase requests
-    if (req.user.position !== "admin") {
-      return res.status(403).json({
-        message:
-          "Access denied. Only administrators can create purchase requests.",
-      });
-    }
-
-    const {
-      date,
-      category,
-      productName,
-      price,
-      providerName,
-      paymentWay,
-      quantity,
-      unit,
-      notes,
-      branch,
-      images,
-    } = req.body;
-
-    // Validate required fields
-    const requiredFields = [
-      "category",
-      "productName",
-      "price",
-      "providerName",
-      "paymentWay",
-      "quantity",
-      "unit",
-      "branch",
-    ];
-    const missingFields = requiredFields.filter((field) => !req.body[field]);
-
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        missingFields,
-      });
-    }
-
-    // Calculate total amount
-    const calculatedPrice = parseFloat(price);
-    const calculatedQuantity = parseInt(quantity);
-    const totalAmount = calculatedPrice * calculatedQuantity;
-
-    const productPurchase = new ProductPurchase({
-      date: date ? new Date(date) : new Date(),
-      category,
-      productName,
-      price: calculatedPrice,
-      providerName,
-      paymentWay,
-      quantity: calculatedQuantity,
-      unit,
-      totalAmount,
-      notes,
-      branch,
-      images: images || [],
-			createdBy: req.user._id,
-    });
-
-    await productPurchase.save();
-
-    // Populate the createdBy field for response
-    await productPurchase.populate("createdBy", "username");
-
-    res.status(201).json({
-      message: "Product purchase created successfully",
-      data: productPurchase,
-    });
-  } catch (error) {
-    console.error("Error creating product purchase:", error);
-    console.error("Error details:", {
-      name: error.name,
+const sendPurchaseError = (res, error, fallbackMessage) => {
+  if (error instanceof InventoryError) {
+    return res.status(error.statusCode).json({
       message: error.message,
-      errors: error.errors,
+      code: error.code,
+      details: error.details,
     });
-    if (error.name === "ValidationError") {
-      const validationErrors = Object.keys(error.errors).map((key) => ({
-        field: key,
-        message: error.errors[key].message,
-      }));
-      return res.status(400).json({
-        message: "Validation error",
-        errors: validationErrors,
-      });
-    }
-    res.status(500).json({ message: "Internal server error" });
   }
-});
+  console.error(fallbackMessage, error);
+  return res.status(500).json({ message: fallbackMessage });
+};
+
+// Create a new product purchase
+router.post(
+  "/",
+  authenticate,
+  requireAdmin,
+  [
+    body("productId").isMongoId().withMessage("Valid product ID is required"),
+    body("quantity")
+      .isFloat({ gt: 0 })
+      .withMessage("Quantity must be positive"),
+    body("price").isFloat({ gt: 0 }).withMessage("Price must be positive"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
+
+      const {
+        productId,
+        date,
+        category,
+        productName,
+        price,
+        providerName,
+        paymentWay,
+        quantity,
+        unit,
+        notes,
+        branch,
+        images,
+      } = req.body;
+
+      // Validate required fields
+      const requiredFields = [
+        "category",
+        "productName",
+        "price",
+        "providerName",
+        "paymentWay",
+        "quantity",
+        "unit",
+        "branch",
+      ];
+      const missingFields = requiredFields.filter((field) => !req.body[field]);
+
+      if (missingFields.length > 0) {
+        return res.status(400).json({
+          message: "Missing required fields",
+          missingFields,
+        });
+      }
+
+      // Calculate total amount
+      const calculatedPrice = parseFloat(price);
+      const calculatedQuantity = Number(quantity);
+      const totalAmount = calculatedPrice * calculatedQuantity;
+      const product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      if (product.unit !== unit) {
+        return res.status(400).json({
+          message: `Purchase unit must match the product unit (${product.unit})`,
+        });
+      }
+
+      const productPurchase = new ProductPurchase({
+        product: product._id,
+        date: date ? new Date(date) : new Date(),
+        category,
+        productName,
+        price: calculatedPrice,
+        providerName,
+        paymentWay,
+        quantity: calculatedQuantity,
+        unit,
+        totalAmount,
+        notes,
+        branch,
+        images: images || [],
+        createdBy: req.user._id,
+      });
+
+      await productPurchase.save();
+
+      // Populate the createdBy field for response
+      await productPurchase.populate("createdBy", "username");
+
+      res.status(201).json({
+        message: "Product purchase created successfully",
+        data: productPurchase,
+      });
+    } catch (error) {
+      console.error("Error creating product purchase:", error);
+      console.error("Error details:", {
+        name: error.name,
+        message: error.message,
+        errors: error.errors,
+      });
+      if (error.name === "ValidationError") {
+        const validationErrors = Object.keys(error.errors).map((key) => ({
+          field: key,
+          message: error.errors[key].message,
+        }));
+        return res.status(400).json({
+          message: "Validation error",
+          errors: validationErrors,
+        });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+);
 
 // Get all product purchases with filtering and pagination
 router.get("/", authenticate, async (req, res) => {
@@ -175,6 +221,7 @@ router.get("/", authenticate, async (req, res) => {
 
     const listQuery = ProductPurchase.find(filter)
       .populate("createdBy", "username")
+      .populate("product", "name unit category amount")
       .sort({ date: -1 })
       .skip(skip)
       .limit(limitNum)
@@ -215,7 +262,7 @@ router.get("/:id", authenticate, async (req, res) => {
     const purchase = await ProductPurchase.findById(req.params.id).populate(
       "createdBy",
       "username",
-    );
+    ).populate("product", "name unit category amount");
 
     if (!purchase) {
       return res.status(404).json({ message: "Product purchase not found" });
@@ -232,99 +279,151 @@ router.get("/:id", authenticate, async (req, res) => {
 });
 
 // Update a product purchase
-router.put("/:id", authenticate, async (req, res) => {
-  try {
-    // Only admin can update purchase requests
-    if (req.user.position !== "admin") {
-      return res.status(403).json({
-        message:
-          "Access denied. Only administrators can update purchase requests.",
+router.put(
+  "/:id",
+  authenticate,
+  requireAdmin,
+  [
+    body("productId").optional().isMongoId().withMessage("Invalid product ID"),
+    body("quantity").optional().isFloat({ gt: 0 }),
+    body("status")
+      .optional()
+      .isIn(["pending", "ordered", "received", "cancelled"]),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
+
+      await runInTransaction(async (session) => {
+        const purchase = await ProductPurchase.findById(req.params.id).session(
+          session,
+        );
+        if (!purchase) {
+          throw new InventoryError(
+            "Product purchase not found",
+            404,
+            "PURCHASE_NOT_FOUND",
+          );
+        }
+
+        const previousStatus = purchase.status;
+        const nextStatus = req.body.status ?? previousStatus;
+        const changesReceivedInventory =
+          previousStatus === "received" &&
+          nextStatus === "received" &&
+          ["productId", "quantity", "unit"].some(
+            (field) => req.body[field] !== undefined,
+          );
+        if (changesReceivedInventory) {
+          throw new InventoryError(
+            "Reverse the received status before changing product, quantity, or unit",
+            409,
+            "RECEIVED_PURCHASE_LOCKED",
+          );
+        }
+
+        if (previousStatus === "received" && nextStatus !== "received") {
+          await applyPurchaseTransition({
+            purchase,
+            previousStatus,
+            nextStatus,
+            userId: req.user._id,
+            session,
+          });
+        }
+
+        const fieldMap = {
+          date: "date",
+          category: "category",
+          productName: "productName",
+          price: "price",
+          providerName: "providerName",
+          paymentWay: "paymentWay",
+          quantity: "quantity",
+          unit: "unit",
+          notes: "notes",
+          branch: "branch",
+          images: "images",
+        };
+        for (const [requestField, modelField] of Object.entries(fieldMap)) {
+          if (req.body[requestField] !== undefined) {
+            purchase[modelField] = req.body[requestField];
+          }
+        }
+
+        if (req.body.productId !== undefined) {
+          const product = await Product.findById(req.body.productId).session(
+            session,
+          );
+          if (!product) {
+            throw new InventoryError(
+              "Product not found",
+              404,
+              "PRODUCT_NOT_FOUND",
+            );
+          }
+          purchase.product = product._id;
+        }
+
+        purchase.status = nextStatus;
+        if (previousStatus !== "received" && nextStatus === "received") {
+          await applyPurchaseTransition({
+            purchase,
+            previousStatus,
+            nextStatus,
+            userId: req.user._id,
+            session,
+          });
+        }
+        await purchase.save({ session });
       });
-    }
 
-    const {
-      date,
-      category,
-      productName,
-      price,
-      providerName,
-      paymentWay,
-      quantity,
-      unit,
-      notes,
-      branch,
-      status,
-      images,
-    } = req.body;
-
-    const updateData = {};
-
-    // Only update provided fields
-    if (date !== undefined) updateData.date = date;
-    if (category !== undefined) updateData.category = category;
-    if (productName !== undefined) updateData.productName = productName;
-    if (price !== undefined) updateData.price = parseFloat(price);
-    if (providerName !== undefined) updateData.providerName = providerName;
-    if (paymentWay !== undefined) updateData.paymentWay = paymentWay;
-    if (quantity !== undefined) updateData.quantity = parseInt(quantity);
-    if (unit !== undefined) updateData.unit = unit;
-    if (notes !== undefined) updateData.notes = notes;
-    if (branch !== undefined) updateData.branch = branch;
-    if (status !== undefined) updateData.status = status;
-    if (images !== undefined) updateData.images = images;
-
-    const purchase = await ProductPurchase.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      {
-        new: true,
-        runValidators: true,
-      },
-    ).populate("createdBy", "username");
-
-    if (!purchase) {
-      return res.status(404).json({ message: "Product purchase not found" });
-    }
-
-    res.json({
-      message: "Product purchase updated successfully",
-      data: purchase,
-    });
-  } catch (error) {
-    console.error("Error updating product purchase:", error);
-    if (error.name === "ValidationError") {
-      const validationErrors = Object.keys(error.errors).map((key) => ({
-        field: key,
-        message: error.errors[key].message,
-      }));
-      return res.status(400).json({
-        message: "Validation error",
-        errors: validationErrors,
+      const purchase = await ProductPurchase.findById(req.params.id)
+        .populate("createdBy", "username")
+        .populate("product", "name unit category amount");
+      return res.json({
+        message: "Product purchase updated successfully",
+        data: purchase,
       });
+    } catch (error) {
+      if (error.name === "ValidationError") {
+        const validationErrors = Object.keys(error.errors).map((key) => ({
+          field: key,
+          message: error.errors[key].message,
+        }));
+        return res.status(400).json({
+          message: "Validation error",
+          errors: validationErrors,
+        });
+      }
+      return sendPurchaseError(res, error, "Error updating product purchase");
     }
-    if (error.name === "CastError") {
-      return res.status(404).json({ message: "Product purchase not found" });
-    }
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
+  },
+);
 
 // Delete a product purchase
-router.delete("/:id", authenticate, async (req, res) => {
+router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   try {
-    // Only admin can delete purchase requests
-    if (req.user.position !== "admin") {
-      return res.status(403).json({
-        message:
-          "Access denied. Only administrators can delete purchase requests.",
-      });
-    }
-
-    const purchase = await ProductPurchase.findByIdAndDelete(req.params.id);
+    const purchase = await ProductPurchase.findById(req.params.id);
 
     if (!purchase) {
       return res.status(404).json({ message: "Product purchase not found" });
     }
+    if (purchase.inventoryApplied) {
+      return res.status(409).json({
+        message:
+          "Reverse the received status before deleting this purchase record",
+        code: "RECEIVED_PURCHASE_LOCKED",
+      });
+    }
+
+    await purchase.deleteOne();
 
     res.json({ message: "Product purchase deleted successfully" });
   } catch (error) {

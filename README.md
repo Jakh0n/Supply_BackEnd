@@ -44,7 +44,10 @@ JWT_SECRET=your-super-secret-jwt-key-change-in-production
 NODE_ENV=development
 ```
 
-4. Make sure MongoDB is running on your system
+4. Make sure MongoDB is running as a replica set. Inventory status changes
+   update products, source records, and the movement ledger in one transaction.
+   MongoDB Atlas supports this by default; local MongoDB must be configured
+   with a replica set and the connection string must include `replicaSet`.
 
 5. Start the development server:
 
@@ -94,6 +97,22 @@ npm run dev
 - `GET /api/orders/export/pdf` - Get orders data for PDF
 - `GET /api/orders/download/pdf` - Download orders as PDF (admin only)
 - `GET /api/orders/stats/dashboard` - Get order statistics (admin only)
+
+### Inventory (Admin or Editor)
+
+- `GET /api/inventory/summary` - Get stock exception and movement counts
+- `GET /api/inventory/settings` - Get setup vs active inventory status
+- `POST /api/inventory/activate` - Start inventory control (admin only)
+- `GET /api/inventory/products` - Get paginated on-hand balances
+- `GET /api/inventory/movements` - Get the immutable movement ledger
+- `POST /api/inventory/movements` - Record a manual receipt or issue
+
+Inventory starts in setup mode. Completing an order does not deduct stock until
+an admin activates control after every product has an opening balance.
+Purchase receipt and order completion changes require transaction-capable
+MongoDB. After activation, a purchase entering `received` adds stock. A
+regular or drink order entering `completed` deducts stock; reversing either
+status creates an opposite ledger movement.
 
 ## User Management
 

@@ -1,5 +1,6 @@
 const express = require('express')
 const { body, validationResult } = require('express-validator')
+const InventorySetting = require('../models/InventorySetting')
 const Product = require('../models/Product')
 const {
 	authenticate,
@@ -199,6 +200,10 @@ router.post(
 			.optional()
 			.isNumeric()
 			.withMessage('Amount must be a number'),
+		body('minimumStock')
+			.optional()
+			.isFloat({ min: 0 })
+			.withMessage('Minimum stock must be zero or greater'),
 		body('count').optional().isNumeric().withMessage('Count must be a number'),
 		body('purchaseSite')
 			.optional()
@@ -231,7 +236,7 @@ router.post(
 				description,
 				supplier,
 				price,
-				amount,
+				minimumStock,
 				count,
 				purchaseSite,
 				contact,
@@ -250,6 +255,13 @@ router.post(
 					.json({ message: 'Product with this name already exists' })
 			}
 
+			const inventorySetting = await InventorySetting.findOne({
+				key: 'global',
+			})
+				.select('status')
+				.lean()
+			const inventoryActive = inventorySetting?.status === 'active'
+
 			const product = new Product({
 				name,
 				category,
@@ -257,12 +269,15 @@ router.post(
 				description: description || undefined,
 				supplier: supplier || undefined,
 				price: typeof price === 'string' ? parseFloat(price) : price,
-				amount: amount || 0,
+				amount: 0,
+				minimumStock: minimumStock || 0,
 				count: count || 0,
 				purchaseSite: purchaseSite || undefined,
 				contact: contact || undefined,
 				monthlyUsage: monthlyUsage || 0,
 				images: images || [],
+				isActive: !inventoryActive,
+				inventoryInitialized: false,
 				createdBy: req.user._id,
 			})
 
@@ -336,6 +351,10 @@ router.put(
 			.withMessage('Price must be a number')
 			.isFloat({ min: 0 })
 			.withMessage('Price must be a positive number'),
+		body('minimumStock')
+			.optional()
+			.isFloat({ min: 0 })
+			.withMessage('Minimum stock must be zero or greater'),
 	],
 	async (req, res) => {
 		try {
@@ -366,9 +385,29 @@ router.put(
 				}
 			}
 
+			const allowedFields = [
+				'name',
+				'category',
+				'unit',
+				'description',
+				'supplier',
+				'price',
+				'count',
+				'minimumStock',
+				'purchaseSite',
+				'contact',
+				'monthlyUsage',
+				'images',
+			]
+			const updateData = Object.fromEntries(
+				allowedFields
+					.filter(field => req.body[field] !== undefined)
+					.map(field => [field, req.body[field]])
+			)
+
 			const updatedProduct = await Product.findByIdAndUpdate(
 				req.params.id,
-				req.body,
+				updateData,
 				{ new: true, runValidators: true }
 			).populate('createdBy', 'username')
 
@@ -392,6 +431,12 @@ router.patch(
 		body('quantity')
 			.isFloat({ gt: 0 })
 			.withMessage('Quantity must be a positive number'),
+		body('reason')
+			.optional()
+			.isString()
+			.trim()
+			.isLength({ max: 500 })
+			.withMessage('Reason cannot exceed 500 characters'),
 	],
 	async (req, res) => {
 		try {
@@ -403,7 +448,10 @@ router.patch(
 				})
 			}
 
-			const product = await addStock(req.params.id, req.body.quantity)
+			const product = await addStock(req.params.id, req.body.quantity, {
+				reason: req.body.reason,
+				userId: req.user._id,
+			})
 			await product.populate('createdBy', 'username')
 
 			res.json({
