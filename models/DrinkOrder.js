@@ -16,6 +16,21 @@ const drinkOrderItemSchema = new mongoose.Schema({
 		trim: true,
 		maxlength: [200, 'Notes cannot exceed 200 characters'],
 	},
+	receivedQuantity: {
+		type: Number,
+		min: [0, 'Received quantity cannot be negative'],
+		default: null,
+	},
+	itemReceiptStatus: {
+		type: String,
+		enum: ['pending', 'received', 'partial', 'missing'],
+		default: 'pending',
+	},
+	discrepancyNotes: {
+		type: String,
+		trim: true,
+		maxlength: [200, 'Discrepancy notes cannot exceed 200 characters'],
+	},
 })
 
 const drinkOrderSchema = new mongoose.Schema(
@@ -71,6 +86,27 @@ const drinkOrderSchema = new mongoose.Schema(
 			default: 0,
 			min: 0,
 		},
+		receiptStatus: {
+			type: String,
+			enum: ['pending', 'received', 'partial'],
+			default: 'pending',
+		},
+		receiptNotes: {
+			type: String,
+			trim: true,
+			maxlength: [500, 'Receipt notes cannot exceed 500 characters'],
+		},
+		hasDiscrepancy: {
+			type: Boolean,
+			default: false,
+		},
+		checkedBy: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'User',
+		},
+		checkedAt: {
+			type: Date,
+		},
 	},
 	{
 		timestamps: true,
@@ -82,5 +118,6 @@ drinkOrderSchema.index({ worker: 1, createdAt: -1 })
 drinkOrderSchema.index({ status: 1, requestedDate: 1 })
 drinkOrderSchema.index({ createdAt: -1 })
 drinkOrderSchema.index({ branch: 1, status: 1, createdAt: -1 })
+drinkOrderSchema.index({ branch: 1, status: 1, receiptStatus: 1 })
 
 module.exports = mongoose.model('DrinkOrder', drinkOrderSchema)

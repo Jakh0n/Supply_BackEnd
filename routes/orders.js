@@ -15,6 +15,11 @@ const {
   transitionOrderStatus,
 } = require("../services/stockService");
 const { getWorkerBranch } = require("../utils/workerBranch");
+const {
+  applyReceiptToOrder,
+  workerCanSubmitReceipt,
+  workerCanViewOrder,
+} = require("../utils/orderReceipt");
 
 const router = express.Router();
 
@@ -44,10 +49,18 @@ router.get("/", authenticate, async (req, res) => {
     } = req.query;
     const filter = {};
 
-    // Workers can see their own orders or all orders if specifically requested
+    // Workers see their own orders plus branch completed orders awaiting receipt check
     if (req.user.position === "worker") {
       if (req.query.viewAll !== "true") {
-        filter.worker = req.user._id;
+        const branch = getWorkerBranch(req.user);
+        filter.$or = [{ worker: req.user._id }];
+        if (branch) {
+          filter.$or.push({
+            branch,
+            status: "completed",
+            receiptStatus: "pending",
+          });
+        }
       }
     }
 
@@ -105,6 +118,7 @@ router.get("/", authenticate, async (req, res) => {
       .populate("worker", "username branch")
       .populate("items.product", "name unit category price images")
       .populate("processedBy", "username")
+      .populate("checkedBy", "username")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum)
@@ -148,17 +162,14 @@ router.get("/:id", authenticate, async (req, res) => {
     const order = await Order.findById(req.params.id)
       .populate("worker", "username branch")
       .populate("items.product", "name unit category supplier price images")
-      .populate("processedBy", "username");
+      .populate("processedBy", "username")
+      .populate("checkedBy", "username");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // Workers can only see their own orders
-    if (
-      req.user.position === "worker" &&
-      order.worker._id.toString() !== req.user._id.toString()
-    ) {
+    if (!workerCanViewOrder(req.user, order)) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -168,6 +179,80 @@ router.get("/:id", authenticate, async (req, res) => {
     res.status(500).json({ message: "Server error fetching order" });
   }
 });
+
+router.post(
+  "/:id/receipt",
+  authenticate,
+  requireWorker,
+  [
+    body("items")
+      .isArray({ min: 1 })
+      .withMessage("At least one receipt item is required"),
+    body("items.*.productId")
+      .isMongoId()
+      .withMessage("Valid product ID is required"),
+    body("items.*.receivedQuantity")
+      .isFloat({ min: 0 })
+      .withMessage("Received quantity must be zero or greater"),
+    body("items.*.discrepancyNotes")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 200 })
+      .withMessage("Discrepancy notes cannot exceed 200 characters"),
+    body("receiptNotes")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 500 })
+      .withMessage("Receipt notes cannot exceed 500 characters"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
+
+      const order = await Order.findById(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      if (!workerCanSubmitReceipt(req.user, order)) {
+        return res.status(403).json({
+          message:
+            "This order cannot be checked. It must be completed, pending receipt, and belong to your branch.",
+        });
+      }
+
+      applyReceiptToOrder(order, req.body, req.user._id);
+      await order.save();
+
+      const populatedOrder = await Order.findById(order._id)
+        .populate("worker", "username branch")
+        .populate("items.product", "name unit category supplier price images")
+        .populate("processedBy", "username")
+        .populate("checkedBy", "username");
+
+      return res.json({
+        message: order.hasDiscrepancy
+          ? "Receipt recorded with discrepancies"
+          : "Receipt confirmed successfully",
+        order: populatedOrder,
+      });
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      console.error("Submit order receipt error:", error);
+      return res.status(500).json({ message: "Server error submitting receipt" });
+    }
+  },
+);
 
 // Create new order (workers only)
 router.post(

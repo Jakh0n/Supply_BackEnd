@@ -9,6 +9,7 @@ const {
 	requireAdminOrEditor,
 } = require('../middleware/auth')
 const { escapeRegex } = require('../utils/escapeRegex')
+const { WORKER_ORDER_PRODUCT_FILTER } = require('../utils/workerOrderProducts')
 const {
 	InventoryError,
 	createManualMovement,
@@ -18,6 +19,11 @@ const {
 const router = express.Router()
 
 router.use(authenticate, requireAdminOrEditor)
+
+const withWorkerOrderProductFilter = (filter = {}) => {
+	if (Object.keys(filter).length === 0) return WORKER_ORDER_PRODUCT_FILTER
+	return { $and: [WORKER_ORDER_PRODUCT_FILTER, filter] }
+}
 
 const validateRequest = (req, res, next) => {
 	const errors = validationResult(req)
@@ -33,8 +39,10 @@ const validateRequest = (req, res, next) => {
 const getInventorySetup = async () => {
 	const [setting, totalProducts, initializedProducts] = await Promise.all([
 		InventorySetting.findOne({ key: 'global' }).lean(),
-		Product.countDocuments({}),
-		Product.countDocuments({ inventoryInitialized: true }),
+		Product.countDocuments(WORKER_ORDER_PRODUCT_FILTER),
+		Product.countDocuments(
+			withWorkerOrderProductFilter({ inventoryInitialized: true })
+		),
 	])
 	return {
 		status: setting?.status || 'setup',
@@ -62,7 +70,9 @@ router.post('/activate', requireAdmin, async (req, res) => {
 			)
 			if (currentSetting?.status === 'active') return
 
-			const totalProducts = await Product.countDocuments({}).session(session)
+			const totalProducts = await Product.countDocuments(
+				WORKER_ORDER_PRODUCT_FILTER
+			).session(session)
 			if (totalProducts === 0) {
 				throw new InventoryError(
 					'Add and initialize products before activating inventory control',
@@ -71,16 +81,17 @@ router.post('/activate', requireAdmin, async (req, res) => {
 				)
 			}
 
-			const uninitializedProducts = await Product.find({
+			const uninitializedFilter = withWorkerOrderProductFilter({
 				inventoryInitialized: { $ne: true },
 			})
+			const uninitializedProducts = await Product.find(uninitializedFilter)
 				.select('name')
 				.limit(20)
 				.session(session)
 				.lean()
-			const remainingProducts = await Product.countDocuments({
-				inventoryInitialized: { $ne: true },
-			}).session(session)
+			const remainingProducts = await Product.countDocuments(
+				uninitializedFilter
+			).session(session)
 			if (remainingProducts > 0) {
 				throw new InventoryError(
 					'Initialize every product before activating inventory control',
@@ -94,12 +105,14 @@ router.post('/activate', requireAdmin, async (req, res) => {
 			}
 
 			await Product.updateMany(
-				{ amount: { $gt: 0 } },
+				withWorkerOrderProductFilter({ amount: { $gt: 0 } }),
 				{ $set: { isActive: true } },
 				{ session }
 			)
 			await Product.updateMany(
-				{ $or: [{ amount: { $lte: 0 } }, { amount: { $exists: false } }] },
+				withWorkerOrderProductFilter({
+					$or: [{ amount: { $lte: 0 } }, { amount: { $exists: false } }],
+				}),
 				{ $set: { isActive: false } },
 				{ session }
 			)
@@ -143,13 +156,17 @@ router.get('/summary', async (req, res) => {
 			lowStockProducts,
 			recentMovementCounts,
 		] = await Promise.all([
-			Product.countDocuments({}),
-			Product.countDocuments({ amount: { $lte: 0 } }),
-			Product.countDocuments({
-				amount: { $gt: 0 },
-				minimumStock: { $gt: 0 },
-				$expr: { $lte: ['$amount', '$minimumStock'] },
-			}),
+			Product.countDocuments(WORKER_ORDER_PRODUCT_FILTER),
+			Product.countDocuments(
+				withWorkerOrderProductFilter({ amount: { $lte: 0 } })
+			),
+			Product.countDocuments(
+				withWorkerOrderProductFilter({
+					amount: { $gt: 0 },
+					minimumStock: { $gt: 0 },
+					$expr: { $lte: ['$amount', '$minimumStock'] },
+				})
+			),
 			StockMovement.aggregate([
 				{ $match: { createdAt: { $gte: since } } },
 				{
@@ -204,10 +221,7 @@ router.get(
 
 		if (search) {
 			const safeSearch = escapeRegex(search)
-			filter.$or = [
-				{ name: { $regex: safeSearch, $options: 'i' } },
-				{ supplier: { $regex: safeSearch, $options: 'i' } },
-			]
+			filter.name = { $regex: safeSearch, $options: 'i' }
 		}
 		if (category && category !== 'all') filter.category = category
 		if (status === 'out') filter.amount = { $lte: 0 }
@@ -219,15 +233,16 @@ router.get(
 			filter.$expr = { $lte: ['$amount', '$minimumStock'] }
 		}
 
+		const scopedFilter = withWorkerOrderProductFilter(filter)
 		const pageNumber = Math.max(Number.parseInt(page, 10) || 1, 1)
 		const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), 100)
 		const [products, total] = await Promise.all([
-			Product.find(filter)
+			Product.find(scopedFilter)
 				.sort({ name: 1 })
 				.skip((pageNumber - 1) * pageSize)
 				.limit(pageSize)
 				.lean(),
-			Product.countDocuments(filter),
+			Product.countDocuments(scopedFilter),
 		])
 
 		return res.json({

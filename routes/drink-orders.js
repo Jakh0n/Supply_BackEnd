@@ -13,6 +13,11 @@ const {
   transitionOrderStatus,
 } = require("../services/stockService");
 const { getWorkerBranch } = require("../utils/workerBranch");
+const {
+  applyReceiptToOrder,
+  workerCanSubmitReceipt,
+  workerCanViewOrder,
+} = require("../utils/orderReceipt");
 
 const router = express.Router();
 
@@ -82,7 +87,15 @@ router.get("/", authenticate, async (req, res) => {
     const filter = {};
 
     if (req.user.position === "worker" && req.query.viewAll !== "true") {
-      filter.worker = req.user._id;
+      const branch = getWorkerBranch(req.user);
+      filter.$or = [{ worker: req.user._id }];
+      if (branch) {
+        filter.$or.push({
+          branch,
+          status: "completed",
+          receiptStatus: "pending",
+        });
+      }
     }
 
     if (
@@ -115,6 +128,7 @@ router.get("/", authenticate, async (req, res) => {
       .populate("worker", "username branch")
       .populate("items.product", "name unit category price images")
       .populate("processedBy", "username")
+      .populate("checkedBy", "username")
       .sort({ createdAt: -1 })
       .skip(skipSafe)
       .limit(limitNum)
@@ -144,16 +158,14 @@ router.get("/:id", authenticate, async (req, res) => {
     const drinkOrder = await DrinkOrder.findById(req.params.id)
       .populate("worker", "username branch")
       .populate("items.product", "name unit category supplier price images")
-      .populate("processedBy", "username");
+      .populate("processedBy", "username")
+      .populate("checkedBy", "username");
 
     if (!drinkOrder) {
       return res.status(404).json({ message: "Drink order not found" });
     }
 
-    if (
-      req.user.position === "worker" &&
-      drinkOrder.worker._id.toString() !== req.user._id.toString()
-    ) {
+    if (!workerCanViewOrder(req.user, drinkOrder)) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -163,6 +175,82 @@ router.get("/:id", authenticate, async (req, res) => {
     res.status(500).json({ message: "Server error fetching drink order" });
   }
 });
+
+router.post(
+  "/:id/receipt",
+  authenticate,
+  requireWorker,
+  [
+    body("items")
+      .isArray({ min: 1 })
+      .withMessage("At least one receipt item is required"),
+    body("items.*.productId")
+      .isMongoId()
+      .withMessage("Valid product ID is required"),
+    body("items.*.receivedQuantity")
+      .isFloat({ min: 0 })
+      .withMessage("Received quantity must be zero or greater"),
+    body("items.*.discrepancyNotes")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 200 })
+      .withMessage("Discrepancy notes cannot exceed 200 characters"),
+    body("receiptNotes")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 500 })
+      .withMessage("Receipt notes cannot exceed 500 characters"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
+
+      const drinkOrder = await DrinkOrder.findById(req.params.id);
+      if (!drinkOrder) {
+        return res.status(404).json({ message: "Drink order not found" });
+      }
+
+      if (!workerCanSubmitReceipt(req.user, drinkOrder)) {
+        return res.status(403).json({
+          message:
+            "This order cannot be checked. It must be completed, pending receipt, and belong to your branch.",
+        });
+      }
+
+      applyReceiptToOrder(drinkOrder, req.body, req.user._id);
+      await drinkOrder.save();
+
+      const populatedOrder = await DrinkOrder.findById(drinkOrder._id)
+        .populate("worker", "username branch")
+        .populate("items.product", "name unit category supplier price images")
+        .populate("processedBy", "username")
+        .populate("checkedBy", "username");
+
+      return res.json({
+        message: drinkOrder.hasDiscrepancy
+          ? "Receipt recorded with discrepancies"
+          : "Receipt confirmed successfully",
+        drinkOrder: populatedOrder,
+      });
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      console.error("Submit drink order receipt error:", error);
+      return res
+        .status(500)
+        .json({ message: "Server error submitting drink order receipt" });
+    }
+  },
+);
 
 router.post(
   "/",
