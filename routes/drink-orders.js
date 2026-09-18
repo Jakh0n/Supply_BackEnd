@@ -18,8 +18,17 @@ const {
   workerCanSubmitReceipt,
   workerCanViewOrder,
 } = require("../utils/orderReceipt");
+const {
+  queueReceiptDiscrepancyNotification,
+} = require("../services/orderReceiptNotification");
+const {
+  canEditOrderItems,
+  isStaffFulfillmentEdit,
+} = require("../utils/orderEditAccess");
 
 const router = express.Router();
+const DRINK_ORDER_PRODUCT_POPULATE_SELECT =
+  "name unit category price amount isActive";
 
 const sendDrinkOrderStatusError = (res, error, fallbackMessage) => {
   if (error instanceof InventoryError) {
@@ -35,17 +44,22 @@ const sendDrinkOrderStatusError = (res, error, fallbackMessage) => {
 
 const DRINK_CATEGORIES = new Set(["drinks", "beverages"]);
 
-const validateDrinkProducts = async (items) => {
+const validateDrinkProducts = async (items, { requireActive = true } = {}) => {
   const productIds = items.map((item) => item.product);
-  const products = await Product.find({
-    _id: { $in: productIds },
-    isActive: true,
-  });
+  const productQuery = { _id: { $in: productIds } };
+
+  if (requireActive) {
+    productQuery.isActive = true;
+  }
+
+  const products = await Product.find(productQuery);
 
   if (products.length !== productIds.length) {
     return {
       valid: false,
-      message: "One or more products are invalid or inactive",
+      message: requireActive
+        ? "One or more products are invalid or inactive"
+        : "One or more products are invalid",
     };
   }
 
@@ -234,6 +248,11 @@ router.post(
         .populate("processedBy", "username")
         .populate("checkedBy", "username");
 
+      queueReceiptDiscrepancyNotification(populatedOrder, {
+        orderType: "drink",
+        workerUsername: req.user.username,
+      });
+
       return res.json({
         message: drinkOrder.hasDiscrepancy
           ? "Receipt recorded with discrepancies"
@@ -312,7 +331,10 @@ router.post(
       await drinkOrder.save();
       await drinkOrder.populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+        path: "items.product",
+        select: DRINK_ORDER_PRODUCT_POPULATE_SELECT,
+      },
       ]);
 
       res.status(201).json({
@@ -373,10 +395,13 @@ router.put(
         return res.status(403).json({ message: "Access denied" });
       }
 
-      if (drinkOrder.status !== "pending") {
-        return res
-          .status(400)
-          .json({ message: "Only pending drink orders can be edited" });
+      if (!canEditOrderItems(req.user, drinkOrder)) {
+        return res.status(400).json({
+          message:
+            req.user.position === "worker"
+              ? "Only pending drink orders can be edited"
+              : "Only pending or approved drink orders can be edited",
+        });
       }
 
       const updateData = {};
@@ -386,7 +411,9 @@ router.put(
       }
 
       if (req.body.items) {
-        const validation = await validateDrinkProducts(req.body.items);
+        const validation = await validateDrinkProducts(req.body.items, {
+          requireActive: !isStaffFulfillmentEdit(req.user),
+        });
         if (!validation.valid) {
           return res.status(400).json(validation);
         }
@@ -403,7 +430,10 @@ router.put(
         { new: true, runValidators: true },
       ).populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+          path: "items.product",
+          select: DRINK_ORDER_PRODUCT_POPULATE_SELECT,
+        },
       ]);
 
       res.json({
@@ -524,7 +554,10 @@ router.patch(
       const drinkOrder = await DrinkOrder.findById(req.params.id);
       await drinkOrder.populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+        path: "items.product",
+        select: DRINK_ORDER_PRODUCT_POPULATE_SELECT,
+      },
         { path: "processedBy", select: "username" },
       ]);
 

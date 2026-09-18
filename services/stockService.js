@@ -346,8 +346,7 @@ async function createManualMovement({
       if (!productToInitialize) {
         throw new InventoryError("Product not found", 404, "PRODUCT_NOT_FOUND");
       }
-      delta =
-        Number(targetBalance) - Number(productToInitialize.amount || 0);
+      delta = Number(targetBalance) - Number(productToInitialize.amount || 0);
       if (delta === 0) {
         if (productToInitialize.inventoryInitialized) {
           throw new InventoryError(
@@ -387,9 +386,8 @@ async function createManualMovement({
     });
 
     if (mode === "set") {
-      const initializedProduct = await Product.findById(productId).session(
-        session,
-      );
+      const initializedProduct =
+        await Product.findById(productId).session(session);
       initializedProduct.inventoryInitialized = true;
       initializedProduct.inventoryInitializedAt = new Date();
       initializedProduct.inventoryInitializedBy = userId;

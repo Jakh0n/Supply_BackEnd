@@ -20,8 +20,17 @@ const {
   workerCanSubmitReceipt,
   workerCanViewOrder,
 } = require("../utils/orderReceipt");
+const {
+  queueReceiptDiscrepancyNotification,
+} = require("../services/orderReceiptNotification");
+const {
+  canEditOrderItems,
+  isStaffFulfillmentEdit,
+} = require("../utils/orderEditAccess");
 
 const router = express.Router();
+const ORDER_PRODUCT_POPULATE_SELECT =
+  "name unit category price amount isActive";
 
 const sendOrderStatusError = (res, error, fallbackMessage) => {
   if (error instanceof InventoryError) {
@@ -106,11 +115,10 @@ router.get("/", authenticate, async (req, res) => {
       filter.status = status;
     }
 
-    const maxLimit = ["admin", "editor"].includes(req.user.position) ? 5000 : 100;
-    const limitNum = Math.min(
-      Math.max(parseInt(limit, 10) || 10, 1),
-      maxLimit,
-    );
+    const maxLimit = ["admin", "editor"].includes(req.user.position)
+      ? 5000
+      : 100;
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), maxLimit);
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const skip = (pageNum - 1) * limitNum;
 
@@ -238,6 +246,11 @@ router.post(
         .populate("processedBy", "username")
         .populate("checkedBy", "username");
 
+      queueReceiptDiscrepancyNotification(populatedOrder, {
+        orderType: "supply",
+        workerUsername: req.user.username,
+      });
+
       return res.json({
         message: order.hasDiscrepancy
           ? "Receipt recorded with discrepancies"
@@ -249,7 +262,9 @@ router.post(
         return res.status(error.statusCode).json({ message: error.message });
       }
       console.error("Submit order receipt error:", error);
-      return res.status(500).json({ message: "Server error submitting receipt" });
+      return res
+        .status(500)
+        .json({ message: "Server error submitting receipt" });
     }
   },
 );
@@ -396,7 +411,10 @@ router.post(
 
       await order.populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+          path: "items.product",
+          select: ORDER_PRODUCT_POPULATE_SELECT,
+        },
       ]);
 
       res.status(201).json({
@@ -479,9 +497,7 @@ router.patch(
 
       const { status, adminNotes, date, branch, scope = "all" } = req.body;
       const filter =
-        scope === "filtered"
-          ? buildEditorOrderFilter({ date, branch })
-          : {};
+        scope === "filtered" ? buildEditorOrderFilter({ date, branch }) : {};
 
       const updateResult = await transitionManyOrderStatuses({
         Model: Order,
@@ -551,7 +567,10 @@ router.patch(
         _id: { $in: orderIds },
       }).populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+          path: "items.product",
+          select: ORDER_PRODUCT_POPULATE_SELECT,
+        },
         { path: "processedBy", select: "username" },
       ]);
 
@@ -607,7 +626,10 @@ router.patch(
       const order = await Order.findById(req.params.id);
       await order.populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+          path: "items.product",
+          select: ORDER_PRODUCT_POPULATE_SELECT,
+        },
         { path: "processedBy", select: "username" },
       ]);
 
@@ -674,11 +696,13 @@ router.put(
         return res.status(403).json({ message: "Access denied" });
       }
 
-      // Only pending orders can be edited
-      if (order.status !== "pending") {
-        return res
-          .status(400)
-          .json({ message: "Only pending orders can be edited" });
+      if (!canEditOrderItems(req.user, order)) {
+        return res.status(400).json({
+          message:
+            req.user.position === "worker"
+              ? "Only pending orders can be edited"
+              : "Only pending or approved orders can be edited",
+        });
       }
 
       const updateData = {};
@@ -701,16 +725,20 @@ router.put(
       }
 
       if (req.body.items) {
-        // Validate products
         const productIds = req.body.items.map((item) => item.product);
-        const products = await Product.find({
-          _id: { $in: productIds },
-          isActive: true,
-        });
+        const productQuery = { _id: { $in: productIds } };
+
+        if (!isStaffFulfillmentEdit(req.user)) {
+          productQuery.isActive = true;
+        }
+
+        const products = await Product.find(productQuery);
 
         if (products.length !== productIds.length) {
           return res.status(400).json({
-            message: "One or more products are invalid or inactive",
+            message: isStaffFulfillmentEdit(req.user)
+              ? "One or more products are invalid"
+              : "One or more products are invalid or inactive",
           });
         }
         updateData.items = req.body.items;
@@ -726,7 +754,10 @@ router.put(
         { new: true, runValidators: true },
       ).populate([
         { path: "worker", select: "username branch" },
-        { path: "items.product", select: "name unit category price" },
+        {
+          path: "items.product",
+          select: ORDER_PRODUCT_POPULATE_SELECT,
+        },
       ]);
 
       res.json({
